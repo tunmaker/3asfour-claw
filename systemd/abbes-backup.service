@@ -1,0 +1,6 @@
+[Unit]
+Description=Back up abbes assistant data to the NAS
+
+[Service]
+Type=oneshot
+ExecStart=/home/openclaw/bin/abbes-backup.sh

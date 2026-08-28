@@ -1,0 +1,21 @@
+[Unit]
+Description=Radicale CalDAV server (loopback only)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/home/openclaw/radicale-venv/bin/python -m radicale --config /home/openclaw/.config/radicale/config
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/openclaw/.local/share/radicale
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=256M
+
+[Install]
+WantedBy=default.target

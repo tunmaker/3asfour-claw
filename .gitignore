@@ -1,0 +1,16 @@
+# Secrets — never commit
+.env
+*.env
+!.env.example
+
+# Runtime data lives outside this tree; these are belt-and-braces
+data/
+reference/
+*.csv
+*.ics
+*.sqlite
+*.db
+secrets/
+
+# Editor / OS
+.DS_Store

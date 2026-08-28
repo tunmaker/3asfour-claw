@@ -1,0 +1,341 @@
+{
+  "agents": {
+    "defaults": {
+      "workspace": "/home/openclaw/.openclaw/workspace",
+      "model": {
+        "primary": "llamacpp/gemma-4-12b-it-q4",
+        "fallbacks": []
+      },
+      "models": {
+        "llamacpp/gemma-4-12b-it-q4": {
+          "alias": "gemma"
+        }
+      },
+      "thinkingDefault": "off",
+      "reasoningDefault": "off",
+      "userTimezone": "Europe/Paris",
+      "timeFormat": "24",
+      "heartbeat": {
+        "every": "0m"
+      },
+      "memorySearch": {
+        "enabled": true,
+        "provider": "openai-compatible",
+        "fallback": "none",
+        "model": "bge-m3",
+        "remote": {
+          "baseUrl": "http://LLAMA_SERVER_IP:8085/v1",
+          "apiKey": {
+            "source": "env",
+            "provider": "default",
+            "id": "LLAMACPP_API_KEY"
+          },
+          "nonBatchConcurrency": 2,
+          "batch": {
+            "enabled": false
+          }
+        },
+        "chunking": {
+          "tokens": 512,
+          "overlap": 64
+        },
+        "extraPaths": [
+          "/home/openclaw/.openclaw/workspace/notes",
+          "/home/openclaw/.openclaw/workspace/groceries"
+        ],
+        "query": {
+          "maxResults": 6,
+          "minScore": 0.25,
+          "hybrid": {
+            "enabled": true
+          }
+        }
+      },
+      "skills": [
+        "notes",
+        "groceries",
+        "calendar"
+      ],
+      "pdfModel": {
+        "primary": "llamacpp/gemma-4-12b-it-q4",
+        "fallbacks": []
+      },
+      "pdfMaxPages": 20,
+      "pdfMaxBytesMb": 10,
+      "timeoutSeconds": 900
+    }
+  },
+  "gateway": {
+    "mode": "local",
+    "bind": "loopback",
+    "port": 18789,
+    "auth": {
+      "mode": "token",
+      "token": {
+        "source": "env",
+        "provider": "default",
+        "id": "OPENCLAW_GATEWAY_TOKEN"
+      },
+      "rateLimit": {
+        "maxAttempts": 5,
+        "windowMs": 60000,
+        "lockoutMs": 300000,
+        "exemptLoopback": false
+      }
+    },
+    "controlUi": {
+      "enabled": true
+    }
+  },
+  "meta": {
+    "lastTouchedVersion": "2026.7.1-2",
+    "lastTouchedAt": "2026-08-28T00:29:48.542Z"
+  },
+  "models": {
+    "mode": "replace",
+    "providers": {
+      "llamacpp": {
+        "baseUrl": "http://LLAMA_SERVER_IP:8080/v1",
+        "apiKey": {
+          "source": "env",
+          "provider": "default",
+          "id": "LLAMACPP_API_KEY"
+        },
+        "api": "openai-completions",
+        "timeoutSeconds": 900,
+        "models": [
+          {
+            "id": "gemma-4-12b-it-q4",
+            "name": "Gemma 4 12B IT Q4_0 (local, Arc A770)",
+            "reasoning": false,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "contextTokens": 98304,
+            "maxTokens": 8192,
+            "params": {
+              "chat_template_kwargs": {
+                "enable_thinking": false
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "anthropic": {
+        "enabled": false
+      },
+      "byteplus": {
+        "enabled": false
+      },
+      "clawrouter": {
+        "enabled": false
+      },
+      "cohere": {
+        "enabled": false
+      },
+      "comfy": {
+        "enabled": false
+      },
+      "copilot-proxy": {
+        "enabled": false
+      },
+      "fal": {
+        "enabled": false
+      },
+      "github-copilot": {
+        "enabled": false
+      },
+      "google": {
+        "enabled": false
+      },
+      "huggingface": {
+        "enabled": false
+      },
+      "litellm": {
+        "enabled": false
+      },
+      "lmstudio": {
+        "enabled": false
+      },
+      "meta": {
+        "enabled": false
+      },
+      "microsoft-foundry": {
+        "enabled": false
+      },
+      "minimax": {
+        "enabled": false
+      },
+      "mistral": {
+        "enabled": false
+      },
+      "novita": {
+        "enabled": false
+      },
+      "nvidia": {
+        "enabled": false
+      },
+      "ollama": {
+        "enabled": false
+      },
+      "openai": {
+        "enabled": false
+      },
+      "opencode": {
+        "enabled": false
+      },
+      "opencode-go": {
+        "enabled": false
+      },
+      "openrouter": {
+        "enabled": false
+      },
+      "sglang": {
+        "enabled": false
+      },
+      "synthetic": {
+        "enabled": false
+      },
+      "together": {
+        "enabled": false
+      },
+      "vllm": {
+        "enabled": false
+      },
+      "volcengine": {
+        "enabled": false
+      },
+      "vydra": {
+        "enabled": false
+      },
+      "xai": {
+        "enabled": false
+      },
+      "xiaomi": {
+        "enabled": false
+      },
+      "document-extract": {
+        "enabled": true
+      },
+      "elevenlabs": {
+        "enabled": false
+      },
+      "runway": {
+        "enabled": false
+      },
+      "voyage": {
+        "enabled": false
+      },
+      "microsoft": {
+        "enabled": false
+      },
+      "senseaudio": {
+        "enabled": false
+      },
+      "phone-control": {
+        "enabled": false
+      }
+    }
+  },
+  "tools": {
+    "media": {
+      "models": [
+        {
+          "type": "cli",
+          "command": "/home/openclaw/bin/whisper-transcribe.sh",
+          "args": [
+            "{{AttachmentPath}}"
+          ],
+          "capabilities": [
+            "audio"
+          ],
+          "timeoutSeconds": 300
+        }
+      ],
+      "audio": {
+        "enabled": true
+      }
+    },
+    "web": {
+      "search": {
+        "enabled": false
+      },
+      "x_search": {
+        "enabled": false
+      },
+      "fetch": {
+        "enabled": false
+      }
+    },
+    "deny": [
+      "web_search",
+      "x_search",
+      "web_fetch",
+      "browser"
+    ],
+    "exec": {
+      "mode": "allowlist",
+      "strictInlineEval": true,
+      "pathPrepend": [
+        "/home/openclaw/bin"
+      ],
+      "timeoutSec": 120,
+      "safeBinTrustedDirs": [
+        "/home/openclaw/bin"
+      ],
+      "safeBins": [
+        "calendar.sh",
+        "grocery.sh",
+        "note-add.sh",
+        "note-search.sh",
+        "baby-log.sh",
+        "quran.sh"
+      ]
+    },
+    "fs": {
+      "workspaceOnly": true
+    },
+    "elevated": {
+      "enabled": false
+    }
+  },
+  "mcp": {
+    "servers": {
+      "open-websearch": {
+        "enabled": true,
+        "url": "http://LLAMA_SERVER_IP:3000/mcp",
+        "transport": "streamable-http",
+        "requestTimeoutMs": 120000,
+        "toolFilter": {
+          "exclude": [
+            "fetchCsdnArticle",
+            "fetchJuejinArticle",
+            "fetchLinuxDoArticle"
+          ]
+        }
+      }
+    }
+  },
+  "skills": {
+    "load": {
+      "extraDirs": [
+        "/home/openclaw/.openclaw/workspace/skills"
+      ]
+    }
+  },
+  "commands": {
+    "bash": false
+  }
+}
