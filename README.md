@@ -44,6 +44,20 @@ vault; the baby log and reference texts live under `$ABBES_DATA_DIR`
 
 See [docs/RUN.md](docs/RUN.md) for operations, security model, and backups.
 
+## Updating a deployment
+
+This repository is the single source of truth. Edit and push from a working copy,
+then on the host that runs the assistant:
+
+```bash
+git pull
+./deploy.sh
+```
+
+`deploy.sh` installs the scripts, systemd units, prompt and skills into place,
+reports what changed, and reloads systemd. It never touches `USER.md`, `MEMORY.md`,
+or any data — those are private and live outside this repository.
+
 ## Qur'an text
 
 Not distributed here. Install a plain-text Uthmani source at
