@@ -64,3 +64,26 @@ and a chat round-trip takes about 7s for a short reply.
 The **gateway is not reachable from here**. It binds loopback on its own host by design
 (see `docs/RUN.md` §7), so nothing on the LAN can POST to it. The Pi will need an SSH
 tunnel to that host — the gateway itself must not be reconfigured to bind wider.
+
+## Phase 0 status
+
+Both round-trips now work from this Pi.
+
+The **speech-to-text host is an LXC container**, which is what made its failure hard to
+read from inside: `/proc/meminfo` is lxcfs-filtered, so it reports the container's memory
+*limit* as if it were physical RAM, and `journalctl -k` and `dmesg` are empty because a
+container has no kernel log of its own. An out-of-memory kill there is the container's
+cgroup limit being enforced by the LXC host, and the report lands in the *host's* kernel
+log, not the container's. Adding a user to `adm` or `systemd-journal` inside the container
+cannot surface it. Raising the container's swap fixed the kills.
+
+The **gateway is reached over an SSH tunnel** (`openclaw-tunnel.service`), because it
+binds loopback on its own host by design. The tunnel restarts on failure and starts at
+boot. Note that a dead tunnel is indistinguishable from a dead gateway at the HTTP layer,
+so the loop's failure path must cover both.
+
+**Transcription quality over the Bluetooth mic is not usable.** The HFP link is 8kHz CVSD.
+Recorded speech plays back intelligibly to a human, but whisper medium returns
+hallucinations from it — including a repeat-loop on `language=auto`. This is the narrowband
+channel, not the model: a headset profile cannot do better than 8kHz. A USB microphone at
+16kHz is the fix; treat the Bluetooth mic as a fallback for playback-only use.
