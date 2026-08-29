@@ -87,3 +87,28 @@ Recorded speech plays back intelligibly to a human, but whisper medium returns
 hallucinations from it — including a repeat-loop on `language=auto`. This is the narrowband
 channel, not the model: a headset profile cannot do better than 8kHz. A USB microphone at
 16kHz is the fix; treat the Bluetooth mic as a fallback for playback-only use.
+
+## Phase 1 — Piper latency on a Pi 3B
+
+Installed via `bin/piper-install.sh` to `~/piper` (~292MB with three voices). Note the
+Debian package named `piper` is a gaming-mouse configurator, not this; and upstream moved
+from `rhasspy/piper` to `OHF-Voice/piper1-gpl` in late 2025.
+
+Measured on this Pi, short sentences, steady state:
+
+| Voice | Wall per sentence | RTF |
+|---|---|---|
+| `ar_JO-kareem-medium` | ~9.6s | ~4.2 |
+| `ar_JO-kareem-low` | ~9.3s | ~4.5 |
+| `fr_FR-siwis-medium` | ~5.5s | ~1.6 |
+| `en_US-lessac-medium` | ~5.1s | ~1.7 |
+
+**Arabic synthesis runs at roughly 4x slower than real time.** Three things this rules
+out: it is not model-load overhead (measured by piping several sentences through one
+process — the gaps between outputs stay at ~9.4s); it is not voice quality (`low` is
+within 3% of `medium`); and it is not thread count (`OMP_NUM_THREADS=1` and `4` differ by
+under 2%). The Cortex-A53 is simply the limit.
+
+Budget roughly 10s of speech synthesis per reply on top of transcription and the model's
+own answer. Anything conversational needs either a faster host for TTS or much shorter
+replies.

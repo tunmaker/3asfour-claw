@@ -7,7 +7,7 @@ CONF="$HOME/.config/voicepi/voicepi.env"
 WHISPER_URL="${WHISPER_URL:?WHISPER_URL must be set in ~/.config/voicepi/voicepi.env}"
 MIC_SOURCE="${MIC_SOURCE:-@DEFAULT_SOURCE@}"
 SECS="${1:-8}"
-LANG_HINT="${2:-${WHISPER_LANGUAGE:-ar}}"
+LANG_HINT="${2:-${WHISPER_LANGUAGE:-ar}}"   # Arabic is pinned; Derja is the target, not French
 CLIP=$(mktemp /tmp/stt-XXXXXX.wav)
 NORM=$(mktemp /tmp/stt-XXXXXX.wav)
 trap 'rm -f "$CLIP" "$NORM"' EXIT
