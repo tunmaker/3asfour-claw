@@ -5,6 +5,7 @@ import array
 import json
 import math
 import os
+import re
 import pathlib
 import shutil
 import subprocess
@@ -160,6 +161,15 @@ def multipart(fields, filepath, filefield="file"):
     body += pathlib.Path(filepath).read_bytes() + b"\r\n"
     body += f"--{boundary}--\r\n".encode()
     return bytes(body), f"multipart/form-data; boundary={boundary}"
+
+
+NOISE_LABEL = re.compile(r"^\s*[\(\[\*][^)\]*]{0,40}[\)\]\*][\s.]*$")
+
+
+def clean_transcript(text):
+    """Drop whisper's non-speech annotations: (موسيقى), [Music], *soupir*."""
+    kept = [ln for ln in text.splitlines() if ln.strip() and not NOISE_LABEL.match(ln)]
+    return "\n".join(kept).strip()
 
 
 def transcribe(path):
@@ -376,8 +386,12 @@ def one_turn():
     finally:
         tmp.unlink(missing_ok=True)
 
+    cleaned = clean_transcript(transcript)
+    if cleaned != transcript:
+        log(f"stripped noise labels: {transcript!r} -> {cleaned!r}")
+    transcript = cleaned
     if not transcript:
-        log("empty transcript, back to idle")
+        log("nothing but noise, back to idle")
         return
     log(f"TRANSCRIPT: {transcript}")
 

@@ -197,3 +197,15 @@ at 30s a single failed turn took 41s end to end. Synthesis itself is 0.2s, so 5s
 
 Voice names must match exactly — an unknown voice returns the default **with HTTP 200**,
 so a typo silently reads French in an Arabic voice rather than erroring.
+
+## Whisper noise labels
+
+Whisper annotates non-speech rather than returning nothing: `(موسيقى)`, `(مسجد)`, `(مشي)`,
+`[Music]`, `[Silence]`, `*soupir*`. On a quiet or short clip the whole transcript can be one
+of these, and on a normal turn one usually precedes the speech. They were reaching the
+agent as part of the prompt.
+
+`clean_transcript` drops lines that consist *only* of such an annotation. Parentheses
+inside real speech are left alone — only a whole-line label is removed. If nothing
+survives, the turn is treated as silence and the loop returns to idle without calling the
+agent.
