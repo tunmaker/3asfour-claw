@@ -29,6 +29,7 @@ RECORD_DIR = tempfile.gettempdir()
 
 FAILURE_PHRASE = "ما نجمش نجاوبك توة"
 ACK_PHRASE = "توة نشوف"
+PROMPT_PHRASE = "نعم؟"
 
 
 class Unreachable(Exception):
@@ -59,7 +60,7 @@ def record_until_silence(stream, path, start_window, preroll=b""):
         buf = stream.read()
         elapsed = time.monotonic() - started
         if buf is None:
-            if elapsed >= max_secs:
+            if elapsed >= max_secs or (not heard and elapsed >= start_window):
                 break
             continue
         frames += buf
@@ -348,6 +349,10 @@ def ack_wav():
     return cached_phrase("ack", ACK_PHRASE)
 
 
+def prompt_wav():
+    return cached_phrase("prompt", PROMPT_PHRASE)
+
+
 def speak_failure():
     try:
         play(failure_wav())
@@ -450,15 +455,36 @@ def one_turn(stream, preroll=b"", start_window=None):
 
 
 def conversation(stream, preroll):
-    """One triggered turn, then a short window where the name is not needed."""
+    """One triggered turn, then a short window where the name is not needed.
+
+    If the name arrives with nothing after it, Abbes answers rather than
+    returning silently to idle -- otherwise there is no way to tell from the
+    room whether it heard you at all.
+    """
     followup = cfg("WAKE_FOLLOWUP_SECS", "10", float)
-    window = None
+    can_prompt = flag("WAKE_PROMPT", True)
+    window = cfg("WAKE_REQUEST_SECS", "3.0", float) if can_prompt else None
     while True:
-        if not one_turn(stream, preroll, window) or followup <= 0:
+        if one_turn(stream, preroll, window):
+            preroll = b""
+            can_prompt = False
+            if followup <= 0:
+                return
+            window = followup
+            log(f"follow-up window: {followup:g}s, no name needed")
+            continue
+        if not can_prompt:
             return
+        can_prompt = False
         preroll = b""
-        window = followup
-        log(f"follow-up window: {followup:g}s, no name needed")
+        log(f"name with no request; asking {PROMPT_PHRASE}")
+        try:
+            with muted(stream):
+                play(prompt_wav())
+        except Exception as e:
+            log(f"prompt unavailable: {e}")
+            return
+        window = cfg("WAKE_PROMPT_SECS", "8", float)
 
 
 def sweep_recordings():
@@ -527,7 +553,8 @@ def main():
         one_turn(stream)
         return
 
-    for name, fn in (("failure phrase", failure_wav), ("ack phrase", ack_wav), ("trigger tone", tone_wav)):
+    for name, fn in (("failure phrase", failure_wav), ("ack phrase", ack_wav),
+                     ("prompt phrase", prompt_wav), ("trigger tone", tone_wav)):
         try:
             fn()
             log(f"{name} cached")
