@@ -75,6 +75,8 @@ def record_until_silence(path):
     threshold = cfg("VAD_THRESHOLD_DBFS", "-45", float)
     max_secs = cfg("VAD_MAX_SECS", "20", float)
     min_secs = cfg("VAD_MIN_SECS", "1.0", float)
+    min_speech = cfg("VAD_MIN_SPEECH_SECS", "0.5", float)
+    start_window = cfg("VAD_START_SECS", "10", float)
 
     cmd = ["parecord", "--raw", f"--rate={rate}", "--channels=1", "--format=s16le"]
     source = cfg("MIC_SOURCE")
@@ -84,6 +86,7 @@ def record_until_silence(path):
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     frames = bytearray()
     silent_for = 0.0
+    voiced_for = 0.0
     started = time.monotonic()
     heard = False
     try:
@@ -95,11 +98,18 @@ def record_until_silence(path):
             level = dbfs(rms_of(buf))
             elapsed = time.monotonic() - started
             if level > threshold:
-                heard = True
+                voiced_for += chunk_ms / 1000.0
                 silent_for = 0.0
+                # A click or a door is not speech; require sustained level before arming.
+                if voiced_for >= min_speech:
+                    heard = True
             else:
                 silent_for += chunk_ms / 1000.0
+                if not heard:
+                    voiced_for = 0.0
             if heard and silent_for >= silence_limit and elapsed >= min_secs:
+                break
+            if not heard and elapsed >= start_window:
                 break
             if elapsed >= max_secs:
                 break
