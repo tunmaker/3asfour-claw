@@ -55,14 +55,14 @@ try:
 except json.JSONDecodeError:
     sys.stderr.write("abbes-ask: unparseable JSON envelope\n"); sys.exit(1)
 status = d.get("status")
-if status != "ok" or not d.get("ok", False):
-    sys.stderr.write(f"abbes-ask: status={status}\n"); sys.exit(1)
+if (status is not None and status != "ok") or d.get("ok") is False:
+    sys.stderr.write(f"abbes-ask: status={status} ok={d.get('ok')}\n"); sys.exit(1)
 reply = d.get("final")
 if not reply:
     for p in d.get("payloads") or []:
         if isinstance(p, dict) and p.get("text"):
             reply = p["text"]; break
 if not reply:
-    sys.stderr.write("abbes-ask: no reply in envelope\n"); sys.exit(1)
+    sys.stderr.write(f"abbes-ask: no reply; envelope keys={sorted(d)}\n"); sys.exit(1)
 sys.stdout.write(reply.strip())
 '
