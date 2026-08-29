@@ -3,6 +3,11 @@
 # Install as /usr/local/bin/abbes-ask, owned by the user that owns ~/.openclaw.
 set -uo pipefail
 
+# A forced command runs non-interactively, so the login PATH is not applied.
+export PATH="${ABBES_OPENCLAW_BIN:-$HOME/.npm-global/bin}:/usr/local/bin:/usr/bin:/bin"
+
+command -v openclaw >/dev/null || { echo "abbes-ask: openclaw not on PATH ($PATH)" >&2; exit 127; }
+
 AGENT="${ABBES_AGENT:-main}"
 SESSION_KEY="${ABBES_SESSION_KEY:-voice}"
 TIMEOUT="${ABBES_TIMEOUT:-60}"
