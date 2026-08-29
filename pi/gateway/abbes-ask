@@ -21,7 +21,7 @@ fi
 
 AGENT="${ABBES_AGENT:-main}"
 SESSION_KEY="${ABBES_SESSION_KEY:-voice}"
-TIMEOUT="${ABBES_TIMEOUT:-60}"
+TIMEOUT="${ABBES_TIMEOUT:-150}"
 MAX_BYTES=65536
 
 msg=$(mktemp /tmp/abbes-ask-XXXXXX.txt) || exit 1

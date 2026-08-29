@@ -17,6 +17,7 @@ import uuid
 import wave
 
 FAILURE_PHRASE = "ما نجمش نجاوبك توة"
+ACK_PHRASE = "توة نشوف"
 
 
 class Unreachable(Exception):
@@ -284,22 +285,44 @@ def synthesize(text, voice, out):
     return out
 
 
-def play(path):
+def play_cmd(path):
     cmd = ["pw-play"]
     sink = cfg("SPEAKER_SINK")
     if sink:
         cmd += [f"--target={sink}"]
     cmd.append(str(path))
-    subprocess.run(cmd, capture_output=True, timeout=cfg("PLAY_TIMEOUT", "120", float))
+    return cmd
 
 
-def failure_wav():
-    cache = pathlib.Path(cfg("FAILURE_WAV", str(pathlib.Path.home() / ".cache" / "voicepi" / "failure.wav")))
+def play(path):
+    subprocess.run(play_cmd(path), capture_output=True, timeout=cfg("PLAY_TIMEOUT", "120", float))
+
+
+def play_async(path):
+    return subprocess.Popen(play_cmd(path), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def cached_phrase(name, phrase, local_only=False):
+    cache = pathlib.Path.home() / ".cache" / "voicepi" / f"{name}.wav"
     if cache.is_file():
         return cache
     cache.parent.mkdir(parents=True, exist_ok=True)
-    synth_local(FAILURE_PHRASE, cfg("PIPER_VOICE_AR", "ar_JO-kareem-medium"), cache)
-    return cache
+    voice = cfg("PIPER_VOICE_AR", "ar_JO-kareem-medium")
+    if not local_only:
+        try:
+            return synth_remote(phrase, voice, cache)
+        except Unreachable:
+            pass
+    return synth_local(phrase, voice, cache)
+
+
+def failure_wav():
+    # Local only: the degradation path must not depend on the network it is reporting broken.
+    return cached_phrase("failure", FAILURE_PHRASE, local_only=True)
+
+
+def ack_wav():
+    return cached_phrase("ack", ACK_PHRASE)
 
 
 def speak_failure():
@@ -348,6 +371,12 @@ def one_turn():
         return
     log(f"TRANSCRIPT: {transcript}")
 
+    ack = None
+    try:
+        ack = play_async(ack_wav())
+    except Exception as e:
+        log(f"ack unavailable: {e}")
+
     try:
         reply = ask_gateway(transcript)
     except Unreachable as e:
@@ -364,6 +393,8 @@ def one_turn():
     out = pathlib.Path(tempfile.gettempdir()) / f"abbes-tts-{uuid.uuid4().hex}.wav"
     try:
         synthesize(reply, voice_for(reply), out)
+        if ack is not None:
+            ack.wait(timeout=10)
         play(out)
     except Unreachable as e:
         log(f"FAILED: {e}")
@@ -380,11 +411,13 @@ def main():
     if not fifo.is_fifo():
         fifo.unlink(missing_ok=True)
         os.mkfifo(fifo, 0o600)
-    try:
-        failure_wav()
-        log("failure phrase cached")
-    except Exception as e:
-        log(f"WARNING: failure phrase not cached ({e}) — degradation path will be slow")
+    for name, fn in (("failure phrase", failure_wav), ("ack phrase", ack_wav)):
+        try:
+            fn()
+            log(f"{name} cached")
+        except Exception as e:
+            log(f"WARNING: {name} not cached ({e})")
+    warm_remote()
     log(f"idle. trigger with: echo go > {fifo}")
     while True:
         with open(fifo, "r") as f:
