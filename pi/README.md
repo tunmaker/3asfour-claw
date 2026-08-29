@@ -142,3 +142,32 @@ room floor measured −35 dBFS and speech about −25 dBFS, so `VAD_THRESHOLD_DB
 between them. The default of −45 never detected silence at all and every turn ran to
 `VAD_MAX_SECS`. Re-measure after changing microphones: record a few seconds of silence and
 put the threshold above the floor.
+
+## Talking to the gateway
+
+The supported interface is the `openclaw agent` CLI, run on the gateway host over SSH as
+the user that owns `~/.openclaw`. The Pi never formats a shell command containing the
+transcript: the key carries a **forced command**, `gateway/abbes-ask`, which reads the
+message from stdin and passes it via `--message-file`. Whisper output is untrusted text
+arriving from a microphone and will contain quotes, newlines and Arabic script, so keeping
+it off the command line is deliberate.
+
+Install `gateway/abbes-ask` as `/usr/local/bin/abbes-ask` on the gateway host and restrict
+the key in `authorized_keys`:
+
+    restrict,command="/usr/local/bin/abbes-ask" ssh-ed25519 AAAA... voicepi-openclaw-tunnel
+
+Note the tunnel key needs `port-forwarding` as well; use a **second key** for the agent
+call rather than widening the tunnel key, so a forced command and a port forward never
+share one credential.
+
+The wrapper asks for `--json` and reads `final` from the envelope, checking `status` is
+`ok` — `error` and `timeout` are distinct statuses and both must fail loudly rather than
+returning empty text that would be synthesised as silence.
+
+**Turns are never retried.** A gateway timeout can still complete server-side, so a retry
+could run the turn twice — which matters as soon as tools write to the grocery list or the
+baby log. On failure the loop speaks the degradation phrase and returns to idle.
+
+A stable `--session-key voice` keeps conversational context across turns; with
+`--agent main` it scopes to `agent:main:voice`.

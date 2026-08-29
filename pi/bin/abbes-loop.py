@@ -177,13 +177,16 @@ def ask_gateway(text):
         host = cfg("GATEWAY_SSH_HOST")
         user = cfg("GATEWAY_SSH_USER", "openclaw")
         key = cfg("GATEWAY_SSH_KEY", str(pathlib.Path.home() / ".ssh" / "id_ed25519_tunnel"))
+        if not host:
+            raise Unreachable("GATEWAY_SSH_HOST not configured")
+        cmd = ["ssh", "-i", key, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", f"{user}@{host}"]
         remote = cfg("GATEWAY_SSH_COMMAND")
-        if not (host and remote):
-            raise Unreachable("GATEWAY_SSH_HOST/GATEWAY_SSH_COMMAND not configured")
-        cmd = ["ssh", "-i", key, "-o", "BatchMode=yes", "-o", f"ConnectTimeout=10", f"{user}@{host}", remote]
+        if remote:
+            cmd.append(remote)
         try:
             out = subprocess.run(cmd, input=text, capture_output=True, text=True, timeout=timeout)
         except subprocess.TimeoutExpired as e:
+            # Never retry: the gateway may still complete an accepted turn, and a repeat could write twice.
             raise Unreachable("gateway ssh timeout") from e
         if out.returncode != 0:
             raise Unreachable(f"gateway ssh rc={out.returncode}: {out.stderr.strip()[:120]}")

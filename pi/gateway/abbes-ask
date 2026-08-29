@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# SSH forced command on the gateway host. Reads a message on stdin, prints the reply.
+# Install as /usr/local/bin/abbes-ask, owned by the user that owns ~/.openclaw.
+set -uo pipefail
+
+AGENT="${ABBES_AGENT:-main}"
+SESSION_KEY="${ABBES_SESSION_KEY:-voice}"
+TIMEOUT="${ABBES_TIMEOUT:-60}"
+MAX_BYTES=65536
+
+msg=$(mktemp /tmp/abbes-ask-XXXXXX.txt) || exit 1
+chmod 600 "$msg"
+trap 'rm -f "$msg"' EXIT
+
+head -c "$MAX_BYTES" > "$msg"
+[ -s "$msg" ] && [ -n "$(tr -d '[:space:]' < "$msg")" ] || { echo "abbes-ask: empty message" >&2; exit 2; }
+
+out=$(openclaw agent \
+        --agent "$AGENT" \
+        --session-key "$SESSION_KEY" \
+        --message-file "$msg" \
+        --timeout "$TIMEOUT" \
+        --json 2>/dev/null)
+rc=$?
+
+[ -n "$out" ] || { echo "abbes-ask: no output from openclaw (rc=$rc)" >&2; exit 1; }
+
+printf '%s' "$out" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except json.JSONDecodeError:
+    sys.stderr.write("abbes-ask: unparseable JSON envelope\n"); sys.exit(1)
+status = d.get("status")
+if status != "ok" or not d.get("ok", False):
+    sys.stderr.write(f"abbes-ask: status={status}\n"); sys.exit(1)
+reply = d.get("final")
+if not reply:
+    for p in d.get("payloads") or []:
+        if isinstance(p, dict) and p.get("text"):
+            reply = p["text"]; break
+if not reply:
+    sys.stderr.write("abbes-ask: no reply in envelope\n"); sys.exit(1)
+sys.stdout.write(reply.strip())
+'
