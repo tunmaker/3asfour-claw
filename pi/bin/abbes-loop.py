@@ -230,6 +230,8 @@ def synth_remote(text, voice, out):
     url = cfg("PIPER_URL")
     if not url:
         raise Unreachable("no PIPER_URL")
+    if not text.strip():
+        raise Unreachable("empty text")
     payload = json.dumps({"text": text, "voice": voice}).encode()
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
     try:
@@ -257,6 +259,15 @@ def synth_local(text, voice, out):
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
         raise Unreachable(f"local piper: {e}") from e
     return out
+
+
+def warm_remote():
+    for voice in (cfg("PIPER_VOICE_FR"), cfg("PIPER_VOICE_EN")):
+        try:
+            synth_remote("ok", voice, pathlib.Path(tempfile.gettempdir()) / "abbes-warm.wav")
+        except Unreachable:
+            return
+    (pathlib.Path(tempfile.gettempdir()) / "abbes-warm.wav").unlink(missing_ok=True)
 
 
 def synthesize(text, voice, out):

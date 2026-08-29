@@ -171,3 +171,29 @@ baby log. On failure the loop speaks the degradation phrase and returns to idle.
 
 A stable `--session-key voice` keeps conversational context across turns; with
 `--agent main` it scopes to `agent:main:voice`.
+
+## Text to speech, remote
+
+`PIPER_URL` points at the Piper server on the inference host (port 9091, no auth, JSON in,
+WAV bytes out). Measured from this Pi:
+
+| Voice | Audio | Wall | RTF |
+|---|---|---|---|
+| `ar_JO-kareem-medium` | 3.84s | **0.21s** | 0.056 |
+| `fr_FR-siwis-medium` | 1.65s | 0.08s | 0.049 |
+| `en_US-lessac-medium` | 1.38s | 0.07s | 0.048 |
+
+About 45x faster than local Piper, which took ~9.6s for ~2.3s of Arabic.
+
+**Local Piper is kept deliberately**, against the server's handoff advice to delete it. It
+is the fallback when the LAN or the inference host is down, and it is what renders the
+degradation phrase — which must work with no network and no model at all. It costs ~292MB
+of disk on a 29GB card.
+
+`PIPER_TIMEOUT` is 5s, not the 30s the handoff suggests. A closed port on a *live* host
+drops packets instead of refusing them, so the full timeout is spent before falling back:
+at 30s a single failed turn took 41s end to end. Synthesis itself is 0.2s, so 5s is still
+25x headroom.
+
+Voice names must match exactly — an unknown voice returns the default **with HTTP 200**,
+so a typo silently reads French in an Arabic voice rather than erroring.
