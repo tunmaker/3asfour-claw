@@ -8,6 +8,17 @@ export PATH="${ABBES_OPENCLAW_BIN:-$HOME/.npm-global/bin}:/usr/local/bin:/usr/bi
 
 command -v openclaw >/dev/null || { echo "abbes-ask: openclaw not on PATH ($PATH)" >&2; exit 127; }
 
+# gateway.auth.token is a SecretRef and is not resolved on this command path, so the
+# token is read from the env file at runtime. It is never printed and never stored here.
+ENV_FILE="${ABBES_OPENCLAW_ENV:-$HOME/.openclaw/openclaw.env}"
+if [ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ] && [ -r "$ENV_FILE" ]; then
+    tok=$(sed -n 's/^[[:space:]]*OPENCLAW_GATEWAY_TOKEN=[[:space:]]*//p' "$ENV_FILE" | tail -1)
+    tok=${tok%\"}; tok=${tok#\"}; tok=${tok%\'}; tok=${tok#\'}
+    [ -n "$tok" ] && export OPENCLAW_GATEWAY_TOKEN="$tok"
+    unset tok
+fi
+[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ] || { echo "abbes-ask: OPENCLAW_GATEWAY_TOKEN not set and not found in $ENV_FILE" >&2; exit 3; }
+
 AGENT="${ABBES_AGENT:-main}"
 SESSION_KEY="${ABBES_SESSION_KEY:-voice}"
 TIMEOUT="${ABBES_TIMEOUT:-60}"
