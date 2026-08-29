@@ -112,3 +112,33 @@ under 2%). The Cortex-A53 is simply the limit.
 Budget roughly 10s of speech synthesis per reply on top of transcription and the model's
 own answer. Anything conversational needs either a faster host for TTS or much shorter
 replies.
+
+## Phase 2 — the loop
+
+`bin/abbes-loop.py`, run as `abbes-loop.service`. It blocks on a FIFO, so a turn is
+started by writing to it — `bin/abbes-trigger.sh`, or `echo go > $XDG_RUNTIME_DIR/abbes-trigger`.
+A GPIO button later only has to write to the same FIFO. `--once` runs a single turn in the
+foreground, which is how to debug it.
+
+    trigger -> record until silence -> whisper -> gateway -> pick voice -> synthesise -> play
+
+**Recordings never persist.** The clip is deleted in a `finally`, so it goes whether
+transcription succeeded, failed, or threw. Verified: no `/tmp/abbes-*.wav` survives a turn.
+
+**Turn log** is `~/.local/state/voicepi/turns.jsonl`, mode 600, pruned to the last 2 hours
+on every write. It lives outside any repository rather than merely being gitignored.
+
+**Failure path.** Any unreachable or timed-out dependency speaks `ما نجمش نجاوبك توة` and
+returns to idle. That phrase is pre-rendered to `~/.cache/voicepi/failure.wav` at startup,
+because synthesising it locally costs ~13s — far too slow to sit inside a failure path.
+It needs no model and no network.
+
+**Text to speech is remote-first with a local fallback.** `PIPER_URL` is tried first; if it
+is unset or unreachable the loop falls back to local Piper and says so in the log. The loop
+therefore works before, during and after the inference host gains a Piper service.
+
+**VAD is a level threshold, and it must be tuned per microphone.** With the webcam mic the
+room floor measured −35 dBFS and speech about −25 dBFS, so `VAD_THRESHOLD_DBFS=-30` sits
+between them. The default of −45 never detected silence at all and every turn ran to
+`VAD_MAX_SECS`. Re-measure after changing microphones: record a few seconds of silence and
+put the threshold above the floor.
