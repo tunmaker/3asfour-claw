@@ -1,0 +1,31 @@
+# Competing words for the wake-word grammar.
+#
+# Vosk decodes into the smallest set of words it is given. With only the name
+# in that set, every sentence in the room decodes to the name and the detector
+# fires constantly. These words give it somewhere else to go, so ordinary
+# conversation resolves to them instead.
+#
+# Words not in the model's vocabulary are ignored. Whitespace-separated;
+# lines starting with # are comments. Add whatever your household says often,
+# and especially anything that sounds like the name.
+
+# vocative particle and the names it usually precedes
+يا محمد أحمد مريم سلمى فاطمة يوسف أمين سارة ليلى كريم حمزة رحمة نور
+خويا أختي أمي بابا ماما جدي جدتي عمي خالي ولدي بنتي الصغير
+
+# words that sound like عباس -- the ones most likely to be misheard as the name
+عبد عباد عبيد باس راس ناس كاس أساس عبر باش عاد عام سلام كلام
+عبد الله عبد الرحمان لباس أكياس
+
+# everyday function words
+في من على إلى هذا هذي هذاك الي ما لا نعم أه أيه كي وقت بعد قبل معا حتى كل
+علاش برشا شوية باهي قداش وقتاش كيفاش وين أما شن شنو توا فمة
+
+# household nouns and verbs
+عندي عندك عندنا نحب تحب يحب نعمل تعمل نمشي تمشي مشى قال قلت جا
+اليوم غدوة البارح الصباح العشية الليلة الوقت ساعة دقيقة
+ماء خبز قهوة عشاء فطور غداء دار خدمة سوق فلوس تلفون مفتاح
+نسأل تسأل نحكي تحكي أحكيلي قوللي نجم تنجم أعطيني
+موعد مواعيد قائمة ذكرني
+ربي الله الحمد يسهل بارك إن شاء
+واحد زوز ثلاثة أربعة خمسة ستة سبعة ثمانية تسعة عشرة

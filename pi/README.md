@@ -16,6 +16,13 @@ addresses, no tokens — the speaker's address is passed as an argument or via
 | `bin/audio-stack-install.sh` | Installs PipeWire + WirePlumber + the BlueZ SPA plugin and configures them for a headless host. |
 | `bin/bt-pair.sh` | Pairs, trusts, and connects a Bluetooth audio device. Takes a MAC. |
 | `bin/bt-audio-test.sh` | Plays a tone over A2DP, then records over HFP and reports levels. Takes a MAC. |
+| `bin/vosk-install.sh` | Installs Vosk in a venv and downloads one small offline model. |
+| `bin/abbes_wake.py` | Wake-word detector. Importable, and runnable standalone with `--listen`. |
+| `bin/abbes_audio.py` | The single shared microphone stream, its pre-roll ring buffer, and level metering. |
+| `bin/abbes_config.py` | Reads `~/.config/voicepi/voicepi.env` for every script. |
+| `bin/wake-listen.sh` | Runs the detector on its own for debugging. |
+| `bin/wake-tally.sh` | Summarises recorded trigger times, for judging false positives. |
+| `wake-decoys.txt` | Competing words for the wake grammar. Install to `~/.config/voicepi/`. |
 
 ## Running
 
@@ -24,6 +31,13 @@ Run over SSH from a checkout:
     ssh PI 'bash -s' < pi/bin/pi-recon.sh
     ssh PI 'bash -s' < pi/bin/audio-stack-install.sh
     ssh PI 'bash -s AA:BB:CC:DD:EE:FF' < pi/bin/bt-pair.sh
+
+The loop is no longer a single file — `abbes-loop.py` imports `abbes_wake`,
+`abbes_audio` and `abbes_config` from the same directory — so copy them together
+rather than piping one over stdin:
+
+    scp pi/bin/*.py pi/bin/*.sh PI:bin/
+    scp pi/wake-decoys.txt PI:.config/voicepi/
 
 ## Notes on this hardware
 
@@ -115,12 +129,12 @@ replies.
 
 ## Phase 2 — the loop
 
-`bin/abbes-loop.py`, run as `abbes-loop.service`. It blocks on a FIFO, so a turn is
-started by writing to it — `bin/abbes-trigger.sh`, or `echo go > $XDG_RUNTIME_DIR/abbes-trigger`.
-A GPIO button later only has to write to the same FIFO. `--once` runs a single turn in the
-foreground, which is how to debug it.
+`bin/abbes-loop.py`, run as `abbes-loop.service`. A turn starts when the wake word is
+heard, or when anything writes to the FIFO — `bin/abbes-trigger.sh`, or
+`echo go > $XDG_RUNTIME_DIR/abbes-trigger`. A GPIO button later only has to write to the
+same FIFO. `--once` runs a single turn in the foreground, which is how to debug it.
 
-    trigger -> record until silence -> whisper -> gateway -> pick voice -> synthesise -> play
+    name heard -> tone -> record until silence -> whisper -> gateway -> pick voice -> synthesise -> play
 
 **Recordings never persist.** The clip is deleted in a `finally`, so it goes whether
 transcription succeeded, failed, or threw. Verified: no `/tmp/abbes-*.wav` survives a turn.
@@ -142,6 +156,119 @@ room floor measured −35 dBFS and speech about −25 dBFS, so `VAD_THRESHOLD_DB
 between them. The default of −45 never detected silence at all and every turn ran to
 `VAD_MAX_SECS`. Re-measure after changing microphones: record a few seconds of silence and
 put the threshold above the floor.
+
+## The wake word
+
+Say **يا عباس** or **عباس**. Detection runs entirely on the Pi with
+[Vosk](https://alphacephei.com/vosk/): no audio, and no text derived from audio, leaves
+this host until the name has actually been recognised here.
+
+Install with `bin/vosk-install.sh`, then copy `wake-decoys.txt` to `~/.config/voicepi/`
+and set the `WAKE_*` keys. The loop is stdlib-only, so it re-execs itself under
+`WAKE_VOSK_PYTHON` to reach Vosk; if Vosk is missing it logs a warning and falls back to
+the FIFO trigger, and everything else still works.
+
+### The model
+
+`vosk-model-small-ar-tn-0.1-linto` — Tunisian Arabic, from Linagora, Apache 2.0.
+158 MB compressed, 267 MB unpacked, and it holds **375 MB of anonymous RSS** once loaded.
+That is the whole reason the design looks the way it does on a 905 MB Pi.
+
+It was chosen over the alternatives on measurement, not preference:
+
+| Model | Recall | False fires | RTF | Verdict |
+|---|---|---|---|---|
+| Tunisian small, grammar of just the name | 5/6 | **12/12** | 0.8 | Useless: the decoder had nothing else to choose from |
+| Tunisian small, free transcription | 4/6 | 0/12 | **3.3** | Accurate, three times too slow |
+| French small (41 MB), free transcription | **1/6** | 0/18 | 5.0 | The phonetic-approximation fallback. Worse on both counts |
+| **Tunisian small, grammar + decoys** | **5/6** | **0/18** | 1.0 | What ships |
+
+### Why there is a decoy list
+
+Vosk decodes into the smallest set of words it is given. Restricted to the name alone it
+has no alternative hypothesis, so *every* sentence in the room decodes to the name — that
+is the 12/12 row above, and it is the single most surprising thing about this setup.
+`wake-decoys.txt` gives it somewhere else to go: about 130 common Derja words, family
+names, and words that sound like عباس (عبد، عباد، باس، راس). Words outside the model's
+vocabulary are dropped silently at load.
+
+**This is where "يا" is handled.** The vocative particle precedes every name in Derja, so
+it is a decoy, never a trigger. The grammar contains the full name; "يا" on its own can
+only ever decode to the decoy.
+
+### Why there is an energy gate
+
+The acoustic model costs about **one second of CPU per second of audio** on a Pi 3B, and
+that floor does not move: sweeping `--beam` from 11 to 7 and `--max-active` from 7000 to
+600 changed RTF by less than 0.05, because the cost is the neural forward pass, not the
+graph search. BLAS is statically linked into `libvosk.so`, so thread count is fixed too.
+
+So the decoder only runs when the room is above `WAKE_GATE_DBFS`. Idle cost measured
+**2.3% of one core** in a quiet room. During continuous speech it runs at roughly real
+time and leans on the stream's backlog buffer, which absorbs about 70 seconds of unbroken
+talking before it has to drop audio.
+
+Closing the gate does not reset the recogniser. A pause between "يا" and "عباس" is normal
+speech, and resetting there throws away the first half of the name — that mistake cost
+recall of 1/5 until it was fixed. State is discarded only after `WAKE_GATE_IDLE_RESET_SECS`
+of continuous quiet.
+
+### Tuning
+
+| Key | Meaning |
+|---|---|
+| `WAKE_WORDS` | What the recogniser may hear. Must exist in the model's vocabulary. |
+| `WAKE_CANDIDATES` | What counts as the name, compared after normalisation. |
+| `WAKE_FUZZ` | Edits allowed against each candidate. 0 strict, 1 default, 2 twitchy. |
+| `WAKE_GATE_DBFS` | Below this the decoder sleeps. Put it above the room's noise floor. |
+| `WAKE_PREROLL_SECS` | Audio kept from before the trigger. |
+| `WAKE_FOLLOWUP_SECS` | Window after a reply where the name is not needed. 0 disables. |
+| `WAKE_MUTE_TAIL_SECS` | How long the mic stays muted after playback. |
+
+Comparison folds diacritics, alef forms (أإآ→ا, ى→ي, ة→ه) and Latin accents, then allows
+`WAKE_FUZZ` edits, so عبّاس, عباس, Abbes and abbas all match one entry.
+
+To change the name: put the new word in both `WAKE_WORDS` and `WAKE_CANDIDATES`, confirm
+it exists in `<model>/graph/words.txt`, and add the old name to `wake-decoys.txt`.
+
+**If it fires on other names, lengthen the phrase rather than fighting the model.** Put
+only `"يا عباس"` in `WAKE_WORDS`; two words in sequence are far harder to hit by accident.
+
+### Debugging
+
+    systemctl --user stop abbes-loop     # it holds the microphone
+    bin/wake-listen.sh                   # prints one line per trigger, nothing else
+    bin/wake-tally.sh                    # counts triggers per hour
+
+`wake-listen.sh` deliberately prints **only** the matched trigger. There is no flag to dump
+what it heard otherwise, because such a flag left on would be a transcript of the room.
+The tally file holds timestamps and nothing else, for the same reason.
+
+Loop output goes to the system journal, not the user journal:
+
+    sudo journalctl -f | grep '^\['
+
+### Not hearing yourself
+
+The microphone is hard-muted for the whole turn after recording ends: chunks are dropped
+at the source and the recogniser is reset. `play()` also waits out the real duration of the
+audio, because `pw-play` returns once the sink has *accepted* the samples, which over
+Bluetooth is well before the speaker has emitted them. Then `WAKE_MUTE_TAIL_SECS` covers
+the remaining latency.
+
+Both parts were needed. With a 0.7s tail and no drain wait, a follow-up window recorded
+the last word of Abbes's own reply and sent it back to the gateway. Verified fixed: asked
+to say its own name, Abbes answered `...وسمّيتني "عباس" قبيلة...` through the speaker and
+did not wake itself, and the follow-up window stayed silent.
+
+### Known limits
+
+- Recall on the **bare name alone** is weaker than on "يا عباس" followed by a request.
+  A short isolated word gives the decoder little to work with.
+- All figures above are from synthetic speech played through the Bluetooth speaker and
+  re-recorded — a harsher path than a person talking to the microphone, and not a
+  substitute for a real tuning session.
+- The 375 MB model leaves roughly 350 MB free. Nothing else should move onto this Pi.
 
 ## Talking to the gateway
 

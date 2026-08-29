@@ -1,21 +1,28 @@
 #!/usr/bin/env python3
-"""Voice loop for Abbes: trigger -> record -> transcribe -> ask -> speak."""
+"""Voice loop for Abbes: wake word -> record -> transcribe -> ask -> speak."""
 
 import array
+import contextlib
 import json
 import math
 import os
 import re
 import pathlib
-import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
 import uuid
 import wave
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+import abbes_wake
+from abbes_audio import RATE, MicGone, MicStream, rms_dbfs, write_tone
+from abbes_config import cfg, flag, listing
 
 FAILURE_PHRASE = "ما نجمش نجاوبك توة"
 ACK_PHRASE = "توة نشوف"
@@ -25,101 +32,51 @@ class Unreachable(Exception):
     pass
 
 
-def load_config():
-    cfg = {}
-    path = pathlib.Path.home() / ".config" / "voicepi" / "voicepi.env"
-    if path.is_file():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            v = v.strip()
-            if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
-                v = v[1:-1]
-            cfg[k.strip()] = v
-    cfg.update({k: v for k, v in os.environ.items() if k in cfg or k.startswith(("WHISPER_", "PIPER_", "GATEWAY_", "VAD_", "MIC_", "SPEAKER_", "TRIGGER_", "TURN_"))})
-    return cfg
-
-
-CFG = load_config()
-
-
-def cfg(key, default=None, cast=str):
-    v = CFG.get(key, default)
-    if v is None:
-        return None
-    try:
-        return cast(v)
-    except (TypeError, ValueError):
-        return default
-
-
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-def dbfs(v):
-    return 20 * math.log10(v / 32768.0) if v > 0 else -120.0
-
-
-def rms_of(buf):
-    a = array.array("h")
-    a.frombytes(buf[: len(buf) // 2 * 2])
-    if not a:
-        return 0.0
-    return math.sqrt(sum(float(x) * x for x in a) / len(a))
-
-
-def record_until_silence(path):
-    rate = 16000
+def record_until_silence(stream, path, start_window, preroll=b""):
+    """Record from the shared stream until the speaker stops. `preroll` is the
+    audio captured just before the trigger fired, so a request spoken in the
+    same breath as the name is not clipped."""
     chunk_ms = 100
-    chunk_bytes = int(rate * 2 * chunk_ms / 1000)
     silence_limit = cfg("VAD_SILENCE_SECS", "1.5", float)
     threshold = cfg("VAD_THRESHOLD_DBFS", "-45", float)
-    max_secs = cfg("VAD_MAX_SECS", "20", float)
+    max_secs = cfg("VAD_MAX_SECS", "15", float)
     min_secs = cfg("VAD_MIN_SECS", "1.0", float)
     min_speech = cfg("VAD_MIN_SPEECH_SECS", "0.5", float)
-    start_window = cfg("VAD_START_SECS", "10", float)
 
-    cmd = ["parecord", "--raw", f"--rate={rate}", "--channels=1", "--format=s16le"]
-    source = cfg("MIC_SOURCE")
-    if source:
-        cmd += ["-d", source]
-
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    frames = bytearray()
+    frames = bytearray(preroll)
     silent_for = 0.0
     voiced_for = 0.0
     started = time.monotonic()
     heard = False
-    try:
-        while True:
-            buf = proc.stdout.read(chunk_bytes)
-            if not buf:
-                break
-            frames += buf
-            level = dbfs(rms_of(buf))
-            elapsed = time.monotonic() - started
-            if level > threshold:
-                voiced_for += chunk_ms / 1000.0
-                silent_for = 0.0
-                # A click or a door is not speech; require sustained level before arming.
-                if voiced_for >= min_speech:
-                    heard = True
-            else:
-                silent_for += chunk_ms / 1000.0
-                if not heard:
-                    voiced_for = 0.0
-            if heard and silent_for >= silence_limit and elapsed >= min_secs:
-                break
-            if not heard and elapsed >= start_window:
-                break
+    while True:
+        buf = stream.read()
+        elapsed = time.monotonic() - started
+        if buf is None:
             if elapsed >= max_secs:
                 break
-    finally:
-        proc.terminate()
-        proc.wait(timeout=5)
+            continue
+        frames += buf
+        level = rms_dbfs(buf)
+        if level > threshold:
+            voiced_for += chunk_ms / 1000.0
+            silent_for = 0.0
+            # A click or a door is not speech; require sustained level before arming.
+            if voiced_for >= min_speech:
+                heard = True
+        else:
+            silent_for += chunk_ms / 1000.0
+            if not heard:
+                voiced_for = 0.0
+        if heard and silent_for >= silence_limit and elapsed >= min_secs:
+            break
+        if not heard and elapsed >= start_window:
+            break
+        if elapsed >= max_secs:
+            break
 
     if not heard:
         return None
@@ -127,7 +84,7 @@ def record_until_silence(path):
     with wave.open(str(path), "w") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
-        w.setframerate(rate)
+        w.setframerate(RATE)
         w.writeframes(bytes(frames))
     return normalize(path)
 
@@ -317,8 +274,48 @@ def play_cmd(path):
     return cmd
 
 
+def wav_secs(path):
+    try:
+        with wave.open(str(path)) as w:
+            return w.getnframes() / w.getframerate()
+    except (wave.Error, OSError):
+        return 0.0
+
+
 def play(path):
+    """Blocks until the audio has actually been heard.
+
+    pw-play can return once the sink has accepted the samples, which over
+    Bluetooth is well before the speaker has emitted them.
+    """
+    started = time.monotonic()
     subprocess.run(play_cmd(path), capture_output=True, timeout=cfg("PLAY_TIMEOUT", "120", float))
+    remaining = wav_secs(path) - (time.monotonic() - started)
+    if remaining > 0:
+        time.sleep(remaining)
+
+
+@contextlib.contextmanager
+def muted(stream):
+    """Hard-mute the microphone across playback so Abbes cannot hear itself.
+
+    The tail covers Bluetooth latency: pw-play returns before the speaker has
+    finished emitting the audio it was handed.
+    """
+    stream.mute()
+    try:
+        yield
+    finally:
+        time.sleep(cfg("WAKE_MUTE_TAIL_SECS", "1.5", float))
+        stream.unmute()
+
+
+def tone_wav():
+    path = pathlib.Path.home() / ".cache" / "voicepi" / "trigger.wav"
+    if not path.is_file():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_tone(path)
+    return path
 
 
 def play_async(path):
@@ -373,86 +370,194 @@ def log_turn(transcript, reply):
     path.chmod(0o600)
 
 
-def one_turn():
+def one_turn(stream, preroll=b"", start_window=None):
+    """Record and answer one request. Returns True if anything was recorded."""
+    if start_window is None:
+        start_window = cfg("VAD_START_SECS", "10", float)
     tmp = pathlib.Path(tempfile.gettempdir()) / f"abbes-{uuid.uuid4().hex}.wav"
-    transcript = ""
-    try:
-        log("listening...")
-        if record_until_silence(tmp) is None:
-            log("no speech detected, back to idle")
-            return
-        transcript = transcribe(tmp)
-    except Unreachable as e:
-        log(f"FAILED: {e}")
-        speak_failure()
-        return
-    finally:
+    log("listening...")
+    if record_until_silence(stream, tmp, start_window, preroll) is None:
         tmp.unlink(missing_ok=True)
+        log("no speech detected, back to idle")
+        return False
 
-    cleaned = clean_transcript(transcript)
-    if cleaned != transcript:
-        log(f"stripped noise labels: {transcript!r} -> {cleaned!r}")
-    transcript = cleaned
-    if not transcript:
-        log("nothing but noise, back to idle")
-        return
-    log(f"TRANSCRIPT: {transcript}")
+    with muted(stream):
+        transcript = ""
+        try:
+            transcript = transcribe(tmp)
+        except Unreachable as e:
+            log(f"FAILED: {e}")
+            speak_failure()
+            return True
+        finally:
+            tmp.unlink(missing_ok=True)
 
-    ack = None
-    try:
-        ack = play_async(ack_wav())
-    except Exception as e:
-        log(f"ack unavailable: {e}")
+        cleaned = clean_transcript(transcript)
+        if cleaned != transcript:
+            log(f"stripped noise labels: {transcript!r} -> {cleaned!r}")
+        transcript = cleaned
+        if not transcript:
+            log("nothing but noise, back to idle")
+            return True
+        log(f"TRANSCRIPT: {transcript}")
 
-    try:
-        reply = ask_gateway(transcript)
-    except Unreachable as e:
-        log(f"FAILED: {e}")
-        log_turn(transcript, "")
-        speak_failure()
-        return
+        spoken = MATCHER.strip(transcript) if MATCHER else transcript
+        if spoken != transcript:
+            log(f"stripped trigger word: {spoken!r}")
+        if not spoken:
+            log("only the name, nothing asked")
+            return True
 
-    log(f"REPLY: {reply}")
-    log_turn(transcript, reply)
-    if not reply:
-        return
+        ack = None
+        try:
+            ack = play_async(ack_wav())
+        except Exception as e:
+            log(f"ack unavailable: {e}")
 
-    out = pathlib.Path(tempfile.gettempdir()) / f"abbes-tts-{uuid.uuid4().hex}.wav"
-    try:
-        synthesize(reply, voice_for(reply), out)
-        if ack is not None:
-            ack.wait(timeout=10)
-        play(out)
-    except Unreachable as e:
-        log(f"FAILED: {e}")
-        speak_failure()
-    finally:
-        out.unlink(missing_ok=True)
+        try:
+            reply = ask_gateway(spoken)
+        except Unreachable as e:
+            log(f"FAILED: {e}")
+            log_turn(spoken, "")
+            speak_failure()
+            return True
+
+        log(f"REPLY: {reply}")
+        log_turn(spoken, reply)
+        if not reply:
+            return True
+
+        out = pathlib.Path(tempfile.gettempdir()) / f"abbes-tts-{uuid.uuid4().hex}.wav"
+        try:
+            synthesize(reply, voice_for(reply), out)
+            if ack is not None:
+                ack.wait(timeout=10)
+            play(out)
+        except Unreachable as e:
+            log(f"FAILED: {e}")
+            speak_failure()
+        finally:
+            out.unlink(missing_ok=True)
+    return True
 
 
-def main():
-    if "--once" in sys.argv:
-        one_turn()
-        return
+def conversation(stream, preroll):
+    """One triggered turn, then a short window where the name is not needed."""
+    followup = cfg("WAKE_FOLLOWUP_SECS", "10", float)
+    window = None
+    while True:
+        if not one_turn(stream, preroll, window) or followup <= 0:
+            return
+        preroll = b""
+        window = followup
+        log(f"follow-up window: {followup:g}s, no name needed")
+
+
+def watch_fifo(event):
     fifo = pathlib.Path(cfg("TRIGGER_FIFO", os.environ.get("XDG_RUNTIME_DIR", "/tmp") + "/abbes-trigger"))
     if not fifo.is_fifo():
         fifo.unlink(missing_ok=True)
         os.mkfifo(fifo, 0o600)
-    for name, fn in (("failure phrase", failure_wav), ("ack phrase", ack_wav)):
+    def run():
+        while True:
+            with open(fifo, "r") as f:
+                f.read()
+            event.set()
+    threading.Thread(target=run, daemon=True).start()
+    return fifo
+
+
+MATCHER = None
+
+
+def ensure_vosk():
+    """Re-exec under the Vosk venv. The loop itself is stdlib-only; the venv
+    exists solely to carry the wake-word dependency, so without it everything
+    still runs, just without the wake word."""
+    venv = cfg("WAKE_VOSK_PYTHON")
+    if not venv or not flag("WAKE_ENABLED", True) or os.environ.get("ABBES_REEXEC"):
+        return
+    try:
+        import vosk  # noqa: F401
+    except ImportError:
+        if pathlib.Path(venv).is_file():
+            os.execve(venv, [venv, os.path.abspath(__file__)] + sys.argv[1:],
+                      dict(os.environ, ABBES_REEXEC="1"))
+
+
+def main():
+    global MATCHER
+    ensure_vosk()
+    stream = MicStream(cfg("MIC_SOURCE"), cfg("WAKE_PREROLL_SECS", "1.2", float))
+
+    listener = None
+    if flag("WAKE_ENABLED", True):
+        try:
+            started = time.monotonic()
+            listener = abbes_wake.build(cfg, listing)
+            MATCHER = listener.detector.matcher
+            log(f"wake word ready in {time.monotonic() - started:.1f}s "
+                f"(gate {listener.threshold:g} dBFS)")
+        except Exception as e:
+            log(f"WARNING: wake word unavailable ({e}); trigger manually")
+
+    if "--once" in sys.argv:
+        one_turn(stream)
+        return
+
+    for name, fn in (("failure phrase", failure_wav), ("ack phrase", ack_wav), ("trigger tone", tone_wav)):
         try:
             fn()
             log(f"{name} cached")
         except Exception as e:
             log(f"WARNING: {name} not cached ({e})")
     warm_remote()
-    log(f"idle. trigger with: echo go > {fifo}")
+
+    manual = threading.Event()
+    fifo = watch_fifo(manual)
+    tally = cfg("WAKE_TALLY") if flag("WAKE_TALLY_ENABLED") else None
+    play_tone = flag("WAKE_TONE", True)
+    log(f"idle. say the name{'' if listener else ' (wake word off)'}, or: echo go > {fifo}")
+
     while True:
-        with open(fifo, "r") as f:
-            f.read()
+        hit = None
         try:
-            one_turn()
+            while not manual.is_set():
+                chunk = stream.read()
+                if chunk is None or listener is None:
+                    continue
+                hit = listener.feed(chunk)
+                if hit:
+                    break
+            if manual.is_set():
+                manual.clear()
+                hit = None
+                log("triggered manually")
+            else:
+                log(f"TRIGGER: {hit}")
+                if tally:
+                    abbes_wake.record_event(tally, time.strftime("%Y-%m-%dT%H:%M:%S"))
+        except MicGone as e:
+            log(f"FATAL: {e}")
+            raise
+
+        preroll = stream.preroll()
+        if hit and play_tone:
+            # Async: the request is often already underway, so recording must
+            # not wait on the speaker.
+            try:
+                play_async(tone_wav())
+            except Exception as e:
+                log(f"tone unavailable: {e}")
+        try:
+            conversation(stream, preroll)
+        except MicGone:
+            raise
         except Exception as e:
             log(f"turn crashed: {e}")
+        if listener:
+            listener.reset()
+        manual.clear()
         log("idle.")
 
 
