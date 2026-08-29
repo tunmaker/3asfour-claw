@@ -20,15 +20,22 @@ trap 'rm -f "$msg"' EXIT
 head -c "$MAX_BYTES" > "$msg"
 [ -s "$msg" ] && [ -n "$(tr -d '[:space:]' < "$msg")" ] || { echo "abbes-ask: empty message" >&2; exit 2; }
 
+err=$(mktemp /tmp/abbes-ask-err-XXXXXX) || exit 1
+trap 'rm -f "$msg" "$err"' EXIT
+
 out=$(openclaw agent \
         --agent "$AGENT" \
         --session-key "$SESSION_KEY" \
         --message-file "$msg" \
         --timeout "$TIMEOUT" \
-        --json 2>/dev/null)
+        --json 2>"$err")
 rc=$?
 
-[ -n "$out" ] || { echo "abbes-ask: no output from openclaw (rc=$rc)" >&2; exit 1; }
+if [ -z "$out" ]; then
+    echo "abbes-ask: no output from openclaw (rc=$rc)" >&2
+    head -c 2000 "$err" >&2
+    exit 1
+fi
 
 printf '%s' "$out" | python3 -c '
 import json, sys
