@@ -1,0 +1,15 @@
+[Unit]
+Description=Abbes voice loop
+After=network-online.target pipewire.service openclaw-tunnel.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=%h/bin/abbes-loop.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target
