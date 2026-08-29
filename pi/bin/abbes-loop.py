@@ -24,6 +24,9 @@ import abbes_wake
 from abbes_audio import RATE, MicGone, MicStream, rms_dbfs, write_tone
 from abbes_config import cfg, flag, listing
 
+# tmpfs on this host, so a clip never reaches the SD card even for an instant.
+RECORD_DIR = tempfile.gettempdir()
+
 FAILURE_PHRASE = "ما نجمش نجاوبك توة"
 ACK_PHRASE = "توة نشوف"
 
@@ -371,74 +374,79 @@ def log_turn(transcript, reply):
 
 
 def one_turn(stream, preroll=b"", start_window=None):
-    """Record and answer one request. Returns True if anything was recorded."""
+    """Record and answer one request. Returns True if anything was recorded.
+
+    The recording is unlinked in a `finally` covering the whole turn, so it goes
+    whether transcription succeeded, failed, or threw.
+    """
     if start_window is None:
         start_window = cfg("VAD_START_SECS", "10", float)
-    tmp = pathlib.Path(tempfile.gettempdir()) / f"abbes-{uuid.uuid4().hex}.wav"
-    log("listening...")
-    if record_until_silence(stream, tmp, start_window, preroll) is None:
+    tmp = pathlib.Path(RECORD_DIR) / f"abbes-{uuid.uuid4().hex}.wav"
+    try:
+        log("listening...")
+        if record_until_silence(stream, tmp, start_window, preroll) is None:
+            log("no speech detected, back to idle")
+            return False
+
+        with muted(stream):
+            try:
+                transcript = transcribe(tmp)
+            except Unreachable as e:
+                log(f"FAILED: {e}")
+                speak_failure()
+                return True
+            finally:
+                tmp.unlink(missing_ok=True)
+
+            cleaned = clean_transcript(transcript)
+            if cleaned != transcript:
+                log(f"stripped noise labels: {transcript!r} -> {cleaned!r}")
+            transcript = cleaned
+            if not transcript:
+                log("nothing but noise, back to idle")
+                return True
+            log(f"TRANSCRIPT: {transcript}")
+
+            spoken = MATCHER.strip(transcript) if MATCHER else transcript
+            if spoken != transcript:
+                log(f"stripped trigger word: {spoken!r}")
+            if not spoken:
+                log("only the name, nothing asked")
+                return True
+
+            ack = None
+            try:
+                ack = play_async(ack_wav())
+            except Exception as e:
+                log(f"ack unavailable: {e}")
+
+            try:
+                reply = ask_gateway(spoken)
+            except Unreachable as e:
+                log(f"FAILED: {e}")
+                log_turn(spoken, "")
+                speak_failure()
+                return True
+
+            log(f"REPLY: {reply}")
+            log_turn(spoken, reply)
+            if not reply:
+                return True
+
+            out = pathlib.Path(RECORD_DIR) / f"abbes-tts-{uuid.uuid4().hex}.wav"
+            try:
+                synthesize(reply, voice_for(reply), out)
+                if ack is not None:
+                    ack.wait(timeout=10)
+                play(out)
+            except Unreachable as e:
+                log(f"FAILED: {e}")
+                speak_failure()
+            finally:
+                out.unlink(missing_ok=True)
+        return True
+    finally:
         tmp.unlink(missing_ok=True)
-        log("no speech detected, back to idle")
-        return False
-
-    with muted(stream):
-        transcript = ""
-        try:
-            transcript = transcribe(tmp)
-        except Unreachable as e:
-            log(f"FAILED: {e}")
-            speak_failure()
-            return True
-        finally:
-            tmp.unlink(missing_ok=True)
-
-        cleaned = clean_transcript(transcript)
-        if cleaned != transcript:
-            log(f"stripped noise labels: {transcript!r} -> {cleaned!r}")
-        transcript = cleaned
-        if not transcript:
-            log("nothing but noise, back to idle")
-            return True
-        log(f"TRANSCRIPT: {transcript}")
-
-        spoken = MATCHER.strip(transcript) if MATCHER else transcript
-        if spoken != transcript:
-            log(f"stripped trigger word: {spoken!r}")
-        if not spoken:
-            log("only the name, nothing asked")
-            return True
-
-        ack = None
-        try:
-            ack = play_async(ack_wav())
-        except Exception as e:
-            log(f"ack unavailable: {e}")
-
-        try:
-            reply = ask_gateway(spoken)
-        except Unreachable as e:
-            log(f"FAILED: {e}")
-            log_turn(spoken, "")
-            speak_failure()
-            return True
-
-        log(f"REPLY: {reply}")
-        log_turn(spoken, reply)
-        if not reply:
-            return True
-
-        out = pathlib.Path(tempfile.gettempdir()) / f"abbes-tts-{uuid.uuid4().hex}.wav"
-        try:
-            synthesize(reply, voice_for(reply), out)
-            if ack is not None:
-                ack.wait(timeout=10)
-            play(out)
-        except Unreachable as e:
-            log(f"FAILED: {e}")
-            speak_failure()
-        finally:
-            out.unlink(missing_ok=True)
-    return True
 
 
 def conversation(stream, preroll):
@@ -451,6 +459,19 @@ def conversation(stream, preroll):
         preroll = b""
         window = followup
         log(f"follow-up window: {followup:g}s, no name needed")
+
+
+def sweep_recordings():
+    """Delete clips orphaned by a crash or a restart mid-turn.
+
+    The turn's own `finally` cannot run if the process is killed between
+    recording and transcription, so startup clears anything left behind.
+    """
+    stale = list(pathlib.Path(RECORD_DIR).glob("abbes-*.wav"))
+    for f in stale:
+        f.unlink(missing_ok=True)
+    if stale:
+        log(f"removed {len(stale)} orphaned recording(s) from a previous run")
 
 
 def watch_fifo(event):
@@ -488,6 +509,7 @@ def ensure_vosk():
 def main():
     global MATCHER
     ensure_vosk()
+    sweep_recordings()
     stream = MicStream(cfg("MIC_SOURCE"), cfg("WAKE_PREROLL_SECS", "1.2", float))
 
     listener = None
