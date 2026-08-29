@@ -48,21 +48,43 @@ if [ -z "$out" ]; then
     exit 1
 fi
 
-printf '%s' "$out" | python3 -c '
+printf '%s' "$out" | python3 -c "
 import json, sys
+
 try:
     d = json.load(sys.stdin)
 except json.JSONDecodeError:
-    sys.stderr.write("abbes-ask: unparseable JSON envelope\n"); sys.exit(1)
-status = d.get("status")
-if (status is not None and status != "ok") or d.get("ok") is False:
-    sys.stderr.write(f"abbes-ask: status={status} ok={d.get('ok')}\n"); sys.exit(1)
-reply = d.get("final")
-if not reply:
-    for p in d.get("payloads") or []:
-        if isinstance(p, dict) and p.get("text"):
-            reply = p["text"]; break
-if not reply:
-    sys.stderr.write(f"abbes-ask: no reply; envelope keys={sorted(d)}\n"); sys.exit(1)
-sys.stdout.write(reply.strip())
-'
+    sys.stderr.write('abbes-ask: unparseable JSON envelope' + chr(10))
+    sys.exit(1)
+
+status = d.get('status')
+if (status is not None and status != 'ok') or d.get('ok') is False:
+    sys.stderr.write('abbes-ask: status=' + str(status) + ' summary=' + str(d.get('summary')) + chr(10))
+    sys.exit(1)
+
+
+def texts(payloads):
+    out = []
+    for p in payloads or []:
+        if isinstance(p, dict) and isinstance(p.get('text'), str) and p['text'].strip():
+            out.append(p['text'].strip())
+    return out
+
+
+result = d.get('result')
+parts = []
+if isinstance(result, dict):
+    parts = texts(result.get('payloads'))
+elif isinstance(result, str) and result.strip():
+    parts = [result.strip()]
+if not parts:
+    parts = texts(d.get('payloads'))
+if not parts and isinstance(d.get('final'), str) and d['final'].strip():
+    parts = [d['final'].strip()]
+
+if not parts:
+    sys.stderr.write('abbes-ask: no reply; envelope keys=' + str(sorted(d)) + chr(10))
+    sys.exit(1)
+
+sys.stdout.write(chr(10).join(parts))
+"
