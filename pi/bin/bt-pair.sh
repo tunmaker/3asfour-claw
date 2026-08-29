@@ -7,19 +7,33 @@ if [ -z "$MAC" ]; then
     exit 2
 fi
 
+paired() { bluetoothctl info "$MAC" 2>/dev/null | grep -q "Paired: yes"; }
+connected() { bluetoothctl info "$MAC" 2>/dev/null | grep -q "Connected: yes"; }
+
+if connected && paired; then
+    echo "already paired and connected"
+    exit 0
+fi
+
+# This speaker stores no link key, so a stale half-bond must be cleared before retrying.
+paired || bluetoothctl remove "$MAC" >/dev/null 2>&1
+
 echo "--- discovering ---"
 bluetoothctl --timeout 12 scan on >/dev/null 2>&1
-bluetoothctl devices | grep -i "$MAC" || { echo "device $MAC not found in scan" >&2; exit 1; }
+bluetoothctl devices | grep -qi "$MAC" || { echo "device $MAC not found; is it on and in pairing mode?" >&2; exit 1; }
 
 echo "--- pairing ---"
-bluetoothctl --agent NoInputNoOutput pair "$MAC" 2>&1 | tail -3
-
-echo "--- trusting ---"
-bluetoothctl trust "$MAC" 2>&1 | tail -1
+bluetoothctl --agent NoInputNoOutput pair "$MAC" 2>&1 | tail -2
+bluetoothctl trust "$MAC" >/dev/null 2>&1
 
 echo "--- connecting ---"
-bluetoothctl connect "$MAC" 2>&1 | tail -3
+for attempt in 1 2 3; do
+    bluetoothctl connect "$MAC" 2>&1 | tail -1
+    sleep 3
+    connected && break
+    echo "  retry $attempt"
+done
 
-sleep 3
-echo "--- device state ---"
-bluetoothctl info "$MAC" 2>&1 | grep -E 'Name|Paired|Trusted|Connected|UUID: (Audio|Handsfree|Headset|Advanced)'
+echo "--- state ---"
+bluetoothctl info "$MAC" 2>&1 | grep -E 'Name|Paired|Trusted|Connected'
+pactl list cards short 2>/dev/null | grep bluez || echo "WARNING: no bluez card in PipeWire"

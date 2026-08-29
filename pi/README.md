@@ -45,4 +45,22 @@ loop must either sit in the headset profile throughout, or switch per turn and p
 profile-change delay.
 
 **Mic level is low.** Expect a noise floor around −49 dBFS and normal speech well under
-−30 dBFS at arm's length. Normalise before sending audio to whisper.
+−30 dBFS at arm's length. Normalise before sending audio to whisper; a gain of roughly
+x3.5 brought a real utterance to −3 dBFS.
+
+**What survives a reboot, and what does not.** Verified by rebooting: the rfkill unblock
+and the powered-on adapter come back on their own, and the WirePlumber drop-in keeps
+working, so the bluez card reappears once a device connects. The *bond does not survive*.
+This speaker stores no link key — its `info` file under `/var/lib/bluetooth` has no
+`[LinkKey]` section — so after every boot it reports `Trusted: yes, Paired: no` and must
+be paired again. `bt-pair.sh` clears the half-bond and re-pairs, and is safe to run on
+every boot; the loop will need to call it before it can expect audio.
+
+## Reaching the other two hosts
+
+Verified from this Pi: the chat endpoint and the embedding endpoint answer over the LAN,
+and a chat round-trip takes about 7s for a short reply.
+
+The **gateway is not reachable from here**. It binds loopback on its own host by design
+(see `docs/RUN.md` §7), so nothing on the LAN can POST to it. The Pi will need an SSH
+tunnel to that host — the gateway itself must not be reconfigured to bind wider.
