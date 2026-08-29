@@ -1,7 +1,7 @@
 [Unit]
 Description=Abbes voice loop
-After=network-online.target pipewire.service openclaw-tunnel.service
-Wants=network-online.target
+After=network-online.target pipewire.service openclaw-tunnel.service abbes-audio.service
+Wants=network-online.target abbes-audio.service
 StartLimitIntervalSec=0
 
 [Service]

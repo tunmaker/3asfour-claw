@@ -209,3 +209,20 @@ agent as part of the prompt.
 inside real speech are left alone — only a whole-line label is removed. If nothing
 survives, the turn is treated as silence and the loop returns to idle without calling the
 agent.
+
+## Boot
+
+`abbes-audio.service` runs before the loop and re-pairs the Bluetooth speaker, waits for
+its PipeWire card to appear, selects the A2DP profile and makes it the default sink. It is
+needed because this speaker stores no link key, so the bond does not survive a reboot.
+It retries every 30s on failure, which covers the speaker simply being switched off at
+boot, and `abbes-loop.service` only `Wants` it — the loop still starts if pairing fails,
+so a missing speaker does not take the whole thing down.
+
+Set `BT_SPEAKER_MAC` in `voicepi.env` to enable it; leave it empty and the service exits
+cleanly, which is what you want once a USB speakerphone replaces the Bluetooth one.
+
+**Quote any config value containing spaces.** `voicepi.env` is read both by the Python
+loop and sourced by shell scripts. An unquoted `WHISPER_PROMPT` made bash try to execute
+the vocabulary list as a command. The loop strips surrounding quotes when it parses the
+file, so quoting is safe for both readers.

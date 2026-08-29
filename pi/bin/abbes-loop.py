@@ -34,7 +34,10 @@ def load_config():
             if not line or line.startswith("#") or "=" not in line:
                 continue
             k, v = line.split("=", 1)
-            cfg[k.strip()] = v.strip()
+            v = v.strip()
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+                v = v[1:-1]
+            cfg[k.strip()] = v
     cfg.update({k: v for k, v in os.environ.items() if k in cfg or k.startswith(("WHISPER_", "PIPER_", "GATEWAY_", "VAD_", "MIC_", "SPEAKER_", "TRIGGER_", "TURN_"))})
     return cfg
 

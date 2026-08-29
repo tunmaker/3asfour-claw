@@ -1,0 +1,16 @@
+[Unit]
+Description=Pair and select the Bluetooth speaker
+After=bluetooth.target pipewire.service wireplumber.service
+Wants=pipewire.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=%h/bin/abbes-audio-setup.sh
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=180
+
+[Install]
+WantedBy=default.target
