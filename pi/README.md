@@ -24,6 +24,7 @@ addresses, no tokens — the speaker's address is passed as an argument or via
 | `bin/wake-tally.sh` | Summarises recorded trigger times, for judging false positives. |
 | `wake-decoys.txt` | Competing words for the wake grammar. Install to `~/.config/voicepi/`. |
 | `bin/abbes-volume` | Speaker volume, as an SSH forced command. Install to `/usr/local/bin`. |
+| `bin/mic-level.sh` | Live microphone meter, for setting the VAD and gate thresholds. |
 
 ## Running
 
@@ -272,6 +273,33 @@ the speaker, did not wake itself, and the follow-up window stayed silent.
   re-recorded — a harsher path than a person talking to the microphone, and not a
   substitute for a real tuning session.
 - The 375 MB model leaves roughly 350 MB free. Nothing else should move onto this Pi.
+
+## Speech to text — and why the audio is sent untouched
+
+`WHISPER_URL` points at the **Vosk `ar-tn` endpoint**, not whisper. Both accept the
+identical multipart POST and return `{"text": ...}`, so switching engines is a port
+change and nothing else. Whisper keeps resolving Derja toward MSA and fragments when it
+cannot; the Vosk model is trained on TARIC, real Tunisian speech.
+
+**Do not apply makeup gain.** `AUDIO_NORMALIZE` defaults to `0` and should stay there.
+The loop used to normalise every clip to −24 dBFS RMS, which was tuned for whisper and
+actively broke Derja recognition:
+
+| | with gain (x2.72) | without |
+|---|---|---|
+| 6s of "قداش الوقت" | `صافية` | `قداش الوقت` |
+
+A real recording measured rms −31.6 dBFS but **peak −9.3 dBFS**; multiplying by 2.72 put
+the peaks within a decibel of clipping. The Vosk endpoint is level-insensitive across
+about 25dB, so the gain bought nothing and cost the transcript. Measure the level instead
+— it is printed on every turn:
+
+    recorded 6.1s, rms -31.6 dBFS, peak -9.3 dBFS
+
+Use `bin/mic-level.sh` to see the same figures live when setting thresholds. It must be
+run directly on the Pi, in a terminal you are watching — a level meter driven over a
+non-interactive SSH command prints its cue only after the recording window has closed,
+which invalidates the measurement.
 
 ## Speaker volume
 

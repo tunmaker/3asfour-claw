@@ -94,6 +94,12 @@ def record_until_silence(stream, path, start_window, preroll=b""):
 
 
 def normalize(path):
+    """Report the recorded level, and optionally apply makeup gain.
+
+    Gain is off by default. The Derja STT endpoint is unaffected across a 25dB
+    range, and the same boost measurably hurt whisper on identical audio, so
+    raising a quiet recording buys nothing and can cost accuracy.
+    """
     with wave.open(str(path)) as w:
         rate, n = w.getframerate(), w.getnframes()
         a = array.array("h")
@@ -102,8 +108,13 @@ def normalize(path):
         return path
     peak = max(abs(x) for x in a)
     rms = math.sqrt(sum(float(x) * x for x in a) / len(a))
-    if rms <= 0:
+    db = lambda v: 20 * math.log10(v / 32768.0) if v > 0 else -120.0
+    level = f"{n / rate:.1f}s, rms {db(rms):.1f} dBFS, peak {db(peak):.1f} dBFS"
+
+    if rms <= 0 or not flag("AUDIO_NORMALIZE", False):
+        log(f"recorded {level}")
         return path
+
     gain = min(20.0, (10 ** (-24 / 20) * 32768) / rms)
     if peak * gain > 32000:
         gain = 32000 / peak
@@ -112,7 +123,7 @@ def normalize(path):
         w.setsampwidth(2)
         w.setframerate(rate)
         w.writeframes(array.array("h", [max(-32768, min(32767, int(x * gain))) for x in a]).tobytes())
-    log(f"recorded {n / rate:.1f}s, normalized x{gain:.2f}")
+    log(f"recorded {level}, normalized x{gain:.2f}")
     return path
 
 
@@ -236,10 +247,15 @@ def synth_local(text, voice, out):
     model = piper_dir / "voices" / f"{voice}.onnx"
     if not binary.is_file() or not model.is_file():
         raise Unreachable(f"local piper missing ({binary} / {model.name})")
+    cmd = [str(binary), "--model", str(model), "--output_file", str(out)]
+    tashkeel = piper_dir / "libtashkeel_model.ort"
+    # espeak-ng handles only fully diacritized Arabic; without this it guesses the
+    # short vowels. The remote Piper applies this by default, the local one does not.
+    if tashkeel.is_file():
+        cmd += ["--tashkeel_model", str(tashkeel)]
     env = dict(os.environ, LD_LIBRARY_PATH=str(piper_dir))
     try:
-        subprocess.run([str(binary), "--model", str(model), "--output_file", str(out)],
-                       input=text, text=True, env=env, capture_output=True,
+        subprocess.run(cmd, input=text, text=True, env=env, capture_output=True,
                        timeout=cfg("PIPER_LOCAL_TIMEOUT", "120", float), check=True)
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
         raise Unreachable(f"local piper: {e}") from e
@@ -379,7 +395,10 @@ def log_turn(transcript, reply):
 
 
 def one_turn(stream, preroll=b"", start_window=None):
-    """Record and answer one request. Returns True if anything was recorded.
+    """Record and answer one request.
+
+    Returns True when something was actually said. Room noise returns False, so
+    a noisy room cannot keep re-opening the follow-up window forever.
 
     The recording is unlinked in a `finally` covering the whole turn, so it goes
     whether transcription succeeded, failed, or threw.
@@ -409,7 +428,7 @@ def one_turn(stream, preroll=b"", start_window=None):
             transcript = cleaned
             if not transcript:
                 log("nothing but noise, back to idle")
-                return True
+                return False
             log(f"TRANSCRIPT: {transcript}")
 
             spoken = MATCHER.strip(transcript) if MATCHER else transcript
