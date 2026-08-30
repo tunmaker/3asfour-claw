@@ -3,12 +3,12 @@
     "defaults": {
       "workspace": "/home/openclaw/.openclaw/workspace",
       "model": {
-        "primary": "llamacpp/gemma-4-12b-it-q4",
+        "primary": "llamacpp/qwen3.5-9b-q8",
         "fallbacks": []
       },
       "models": {
-        "llamacpp/gemma-4-12b-it-q4": {
-          "alias": "gemma"
+        "llamacpp/qwen3.5-9b-q8": {
+          "alias": "qwen"
         }
       },
       "thinkingDefault": "off",
@@ -57,7 +57,7 @@
         "calendar"
       ],
       "pdfModel": {
-        "primary": "llamacpp/gemma-4-12b-it-q4",
+        "primary": "llamacpp/qwen3.5-9b-q8",
         "fallbacks": []
       },
       "pdfMaxPages": 20,
@@ -105,8 +105,8 @@
         "timeoutSeconds": 900,
         "models": [
           {
-            "id": "gemma-4-12b-it-q4",
-            "name": "Gemma 4 12B IT Q4_0 (local, Arc A770)",
+            "id": "qwen3.5-9b-q8",
+            "name": "Qwen3.5 9B Q8_0 (local, Arc A770)",
             "reasoning": false,
             "input": [
               "text",
