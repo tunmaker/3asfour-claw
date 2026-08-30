@@ -116,7 +116,7 @@ def normalize(path):
 
     if rms <= 0 or not flag("AUDIO_NORMALIZE", False):
         log(f"recorded {level}")
-        return path
+        return trim_silence(path, rate, a, db)
 
     gain = min(20.0, (10 ** (-24 / 20) * 32768) / rms)
     if peak * gain > 32000:
@@ -127,6 +127,44 @@ def normalize(path):
         w.setframerate(rate)
         w.writeframes(array.array("h", [max(-32768, min(32767, int(x * gain))) for x in a]).tobytes())
     log(f"recorded {level}, normalized x{gain:.2f}")
+    return path
+
+
+def trim_silence(path, rate, samples, db):
+    """Cut leading and trailing near-silence before the clip goes to Vosk.
+
+    A recording that is three seconds of speech inside twenty of room noise
+    transcribes as one word or nothing at all: the decoder spends its search on
+    the noise. Trimming is not gain — every remaining sample is untouched — so it
+    does not run into the makeup-gain problem that broke Derja recognition.
+    """
+    if not flag("AUDIO_TRIM", True) or not samples:
+        return path
+    win = max(1, int(rate * 0.05))
+    margin = cfg("AUDIO_TRIM_MARGIN_SECS", "0.25", float)
+    floor = cfg("AUDIO_TRIM_DBFS", "-26", float)
+
+    loud = []
+    for i in range(0, len(samples) - win, win):
+        seg = samples[i:i + win]
+        r = math.sqrt(sum(float(x) * x for x in seg) / len(seg))
+        if db(r) > floor:
+            loud.append(i)
+    if not loud:
+        return path
+
+    start = max(0, loud[0] - int(margin * rate))
+    end = min(len(samples), loud[-1] + win + int(margin * rate))
+    kept = end - start
+    if kept >= len(samples) - rate:      # nothing worth cutting
+        return path
+
+    with wave.open(str(path), "w") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(samples[start:end].tobytes())
+    log(f"  trimmed to {kept / rate:.1f}s of {len(samples) / rate:.1f}s")
     return path
 
 
