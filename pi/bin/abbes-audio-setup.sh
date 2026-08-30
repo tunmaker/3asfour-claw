@@ -27,4 +27,10 @@ pactl set-card-profile "$CARD" "${BT_PROFILE:-a2dp-sink}" || true
 sink="bluez_output.${MAC//:/_}.1"
 pactl set-default-sink "$sink" 2>/dev/null || true
 
+# The speaker restores its own saved level on every reconnect, so an unpinned volume
+# drifts: a reboot or a wireplumber restart silently leaves Abbes too quiet to hear.
+pactl set-sink-volume "$sink" "${SPEAKER_BOOT_VOLUME:-85}%" 2>/dev/null || true
+pactl set-sink-mute "$sink" 0 2>/dev/null || true
+
 echo "audio ready: $(pactl list sinks short | grep bluez || echo 'no bluez sink')"
+echo "volume pinned: $(pactl get-sink-volume "$sink" 2>/dev/null | head -1 | grep -o '[0-9]*%' | head -1)"

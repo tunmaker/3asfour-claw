@@ -28,6 +28,23 @@ wireplumber.profiles = {
 }
 CONF
 
+# Streaming TTS pushes one sentence at a time. Letting the sink suspend in the gaps
+# pays the A2DP wake-up on every sentence, which is audible as a stutter.
+cat > ~/.config/wireplumber/wireplumber.conf.d/51-bluez-no-suspend.conf <<'CONF'
+monitor.bluez.rules = [
+  {
+    matches = [
+      { node.name = "~bluez_output.*" }
+    ]
+    actions = {
+      update-props = {
+        session.suspend-timeout-seconds = 0
+      }
+    }
+  }
+]
+CONF
+
 systemctl --user daemon-reload
 systemctl --user enable --now pipewire.socket pipewire-pulse.socket wireplumber.service
 systemctl --user restart wireplumber.service
