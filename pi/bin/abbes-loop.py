@@ -28,9 +28,11 @@ from abbes_stream import PlaybackStream, stream_turn
 # tmpfs on this host, so a clip never reaches the SD card even for an instant.
 RECORD_DIR = tempfile.gettempdir()
 
-FAILURE_PHRASE = "ما نجمش نجاوبك توة"
-ACK_PHRASE = "توة نشوف"
-PROMPT_PHRASE = "نعم؟"
+# Spoken by the Pi itself, not by the model, so they are set here rather than in
+# the prompt. فصحى, to match what Abbes now answers in.
+FAILURE_PHRASE = cfg("FAILURE_PHRASE", "لا أستطيع الإجابة الآن")
+ACK_PHRASE = cfg("ACK_PHRASE", "لحظة")
+PROMPT_PHRASE = cfg("PROMPT_PHRASE", "نعم؟")
 
 
 class Unreachable(Exception):
@@ -398,9 +400,10 @@ def log_turn(transcript, reply):
 def streamed_turn(url, wav_path):
     """One turn through the orchestrator: recording in, speech out as it renders.
 
-    Returns True when the turn was handled (including a spoken failure), False
-    only when the orchestrator could not be reached at all, so the caller can fall
-    back to the direct path rather than leaving the household with silence.
+    Returns "handled" when the turn ran, "empty" when nothing was actually said
+    (the caller returns to idle quietly and may prompt), and "unreachable" when
+    the orchestrator could not be contacted at all, so the caller can fall back to
+    the direct path rather than leaving the household with silence.
 
     The acknowledgement tone goes through the same playback stream as the reply,
     so the two cannot overlap and the Bluetooth sink opens exactly once per turn.
@@ -425,23 +428,27 @@ def streamed_turn(url, wav_path):
         player.flush()
         log(f"FAILED: {e}")
         if str(e).startswith("orchestrator:"):
-            return False
+            return "unreachable"
         log_turn(heard["text"], "")
         speak_failure()
-        return True
+        return "handled"
     finally:
         player.close()
 
     reply = out.get("reply", "")
     marks = out.get("marks", {})
+    if not heard["text"].strip():
+        return "empty"
     log(f"REPLY: {reply}")
     if marks:
         log(f"  stt {marks.get('sttMs')}ms  first-token {marks.get('firstDeltaMs')}ms  "
             f"first-audio {marks.get('firstAudioMs')}ms  total {marks.get('totalMs')}ms")
     log_turn(heard["text"], reply)
     if not reply:
+        # Something was said and the agent produced nothing. That is a real
+        # failure and worth saying out loud.
         speak_failure()
-    return True
+    return "handled"
 
 
 def one_turn(stream, preroll=b"", start_window=None):
@@ -465,9 +472,16 @@ def one_turn(stream, preroll=b"", start_window=None):
         orch = cfg("ORCHESTRATOR_URL")
         if orch:
             with muted(stream):
-                if streamed_turn(orch, tmp):
-                    return True
-                log("orchestrator unreachable, falling back to the direct path")
+                status = streamed_turn(orch, tmp)
+            if status == "handled":
+                return True
+            if status == "empty":
+                # Nothing was actually said. Return to idle quietly so the caller
+                # can prompt; speaking the failure phrase here is what made Abbes
+                # repeat "ما نجمش نجاوبك توة" at an empty room.
+                log("nothing but noise, back to idle")
+                return False
+            log("orchestrator unreachable, falling back to the direct path")
 
         with muted(stream):
             try:
@@ -530,16 +544,47 @@ def one_turn(stream, preroll=b"", start_window=None):
         tmp.unlink(missing_ok=True)
 
 
-def conversation(stream, preroll):
-    """One triggered turn, then a short window where the name is not needed.
+def _preroll_has_speech(preroll):
+    """True when the request was spoken in the same breath as the name.
 
-    If the name arrives with nothing after it, Abbes answers rather than
-    returning silently to idle -- otherwise there is no way to tell from the
-    room whether it heard you at all.
+    The pre-roll holds the audio captured just before the trigger fired. If it
+    carries speech, the question is already in hand and prompting would talk over
+    someone mid-sentence.
+    """
+    if not preroll:
+        return False
+    threshold = cfg("VAD_THRESHOLD_DBFS", "-30", float)
+    tail = preroll[-RATE * 2 * 2:] if len(preroll) > 4 else preroll
+    return rms_dbfs(tail) > threshold
+
+
+def conversation(stream, preroll):
+    """Answer the name, then wait for the question however long it takes.
+
+    Hearing the name is not the same as being asked something. Abbes says "نعم؟"
+    as soon as it is called, then holds the microphone open until you actually
+    start speaking -- two seconds or thirty, it does not matter -- and only stops
+    recording when you stop. A request that arrives in the same breath as the name
+    is caught by the pre-roll and answered without the prompt.
     """
     followup = cfg("WAKE_FOLLOWUP_SECS", "10", float)
     can_prompt = flag("WAKE_PROMPT", True)
-    window = cfg("WAKE_REQUEST_SECS", "3.0", float) if can_prompt else None
+    window = cfg("WAKE_REQUEST_SECS", "1.5", float) if can_prompt else None
+
+    # If the name arrived alone, answer it before listening rather than after a
+    # silent pause -- from the room, silence is indistinguishable from not having
+    # been heard.
+    if can_prompt and not _preroll_has_speech(preroll):
+        log(f"name heard; answering {PROMPT_PHRASE} and waiting for the question")
+        try:
+            with muted(stream):
+                play(prompt_wav())
+        except Exception as e:
+            log(f"prompt unavailable: {e}")
+        can_prompt = False
+        preroll = b""
+        window = cfg("WAKE_PROMPT_SECS", "30", float)
+
     while True:
         if one_turn(stream, preroll, window):
             preroll = b""
