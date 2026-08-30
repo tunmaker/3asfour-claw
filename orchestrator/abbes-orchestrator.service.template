@@ -1,0 +1,27 @@
+[Unit]
+Description=Abbes streaming voice orchestrator
+After=network.target openclaw-gateway.service
+Wants=openclaw-gateway.service
+
+[Service]
+Type=simple
+WorkingDirectory=__HOME__/orchestrator
+EnvironmentFile=__HOME__/.openclaw/openclaw.env
+Environment=NODE_ENV=production
+Environment=ABBES_ORCH_PORT=18790
+Environment=ABBES_SESSION_KEY=voice
+# STT_URL and TTS_URL come from the gateway env file: WHISPER_URL points at the
+# Vosk Derja endpoint (the name is historical) and PIPER_URL at Piper.
+ExecStart=/usr/bin/env sh -c 'exec node abbes-orchestrator.mjs'
+Restart=on-failure
+RestartSec=3
+
+# It holds no state and reaches only the LAN inference host and the local gateway.
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__HOME__/orchestrator
+
+[Install]
+WantedBy=default.target

@@ -6,10 +6,14 @@ can carry a voice turn, before anything is rewritten to depend on it.
 Nothing here is wired into the running assistant yet. Both scripts are read-mostly
 probes, run by hand on the gateway host.
 
-| Script | What it does |
+| File | What it does |
 | --- | --- |
-| `gw-probe.mjs` | Connects as an operator client and prints what this build advertises. Read-only. |
-| `gw-stream.mjs` | Sends one turn and verifies the delta stream reconstructs the final message. |
+| `abbes-orchestrator.mjs` | The service. WAV in, speech out. `/turn`, `/turn/stream`, `/health`. |
+| `gateway-client.mjs` | Persistent operator connection: connect, subscribe, send a turn, stream deltas. |
+| `sentences.mjs` | Cuts a token stream into speakable pieces. Arabic-aware. |
+| `sentences.test.mjs` | 23 assertions over that. `node sentences.test.mjs`. |
+| `gw-probe.mjs` | Prints what this gateway build advertises. Read-only. |
+| `gw-stream.mjs` | One turn, verifying deltas reconstruct the final message. |
 
 Both read `OPENCLAW_GATEWAY_TOKEN` from `~/.openclaw/openclaw.env` at runtime and
 load `ws` from the OpenClaw install, so there is nothing to `npm install`.
@@ -82,3 +86,77 @@ from config and directives. Interruption goes through `chat.abort` or
 `sessions.abort`, both advertised.
 
 `idempotencyKey` is **required** on every `chat.send`, not optional.
+
+
+---
+
+# Phase 2 — the orchestrator
+
+**Not wired into the Pi.** The voice loop still runs the old path; this listens on
+`127.0.0.1:18790` beside it and nothing depends on it yet.
+
+    POST /turn         WAV in -> one WAV out (blocking, the old shape)
+    POST /turn/stream  WAV in -> length-prefixed frames, one per sentence
+    GET  /health
+
+Stream frames are `[1 byte kind][4 byte big-endian length][body]`, kind 1 =
+transcript JSON, 2 = WAV chunk, 3 = end JSON with the reply and timings.
+
+## Measured, six consecutive short turns
+
+| | warm |
+| --- | --- |
+| STT (Vosk, 1.5 s clip) | 164 – 225 ms |
+| First token from the gateway | 1069 – 1186 ms |
+| **First audio out** | **2305 – 2535 ms** |
+| Whole turn | 4306 – 4491 ms |
+
+Against a 5.6 s baseline, first audio lands at about **2.4 s**. The first turn after
+a restart costs 8777 ms to first token — that is the cold prompt cache, and it
+matches the 8.4 s cold prefill measured on the inference host exactly.
+
+## The finding that matters more than the number
+
+**On a one-sentence reply, streaming buys almost nothing.** First audio lands when
+generation finishes, because there is no earlier sentence boundary to cut at.
+Dropping the first-chunk limit from 70 characters to 36 changed nothing: the whole
+reply was 27 characters. The 5.6 s to 2.4 s improvement is mostly the removal of
+three SSH round trips and the Pi's own sequencing — not streaming.
+
+Streaming earns its keep on long replies. On a 16-sentence answer, audio started at
+the first sentence instead of the last, with chunks arriving steadily from 11 s to
+26 s.
+
+So the voice brevity rule in `AGENTS.md` and this work pull against each other. The
+rule exists to protect time-to-*last*-word, and it is why replies are one sentence.
+Relaxing it is what converts this pipeline into a felt improvement.
+
+**Time to first token dominates everything else.** It ranged from 1.1 s on a plain
+question to 10.3 s on a turn that read files first. Audio follows the first token by
+a steady ~1.2 s regardless. The `session.tool` filler cue is therefore not a nicety:
+it is the only thing that covers a ten-second silence while the agent works.
+
+## Details worth keeping
+
+**Node's first fetch cost 2.4 s** on a call that takes 180 ms warm — lazy HTTP stack
+initialisation. The service now warms STT and TTS at startup, in about 30 ms.
+
+**Piper returns a complete RIFF file per sentence.** Concatenating them would leave
+a 44-byte header in the middle of the audio, which is an audible click, so `/turn`
+takes the header from the first part and appends only `data` payloads.
+
+**A colon is a sentence terminator here.** Excluding it delayed first audio by ten
+seconds on a reply that opened with a colon-led preamble. The Arabic comma `،` is
+not a terminator — Derja runs long comma-joined clauses — but it is the preferred
+place to force a cut in an over-long run, because it is where a speaker breathes.
+
+**Cutting at end-of-buffer is unsafe while streaming.** The next delta may continue
+the sentence; `19:` + `09.` split into two utterances before this was fixed. Only a
+flush may cut at the end of what has arrived.
+
+## Still to do
+
+- Wire the Pi to `/turn/stream` and retire the SSH forced command for voice (2.3).
+- Persistent playback stream on the Pi, so chunks play as they land.
+- Filler cue on `session.tool`, which the client half of does not exist yet.
+- Idempotency keys through the nine shell scripts (Phase 3).
