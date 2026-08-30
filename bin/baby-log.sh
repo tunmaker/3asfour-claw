@@ -3,6 +3,8 @@ set -euo pipefail
 
 ENV_FILE="${OPENCLAW_ENV:-$HOME/.openclaw/openclaw.env}"
 [ -f "$ENV_FILE" ] && { set -a; . "$ENV_FILE"; set +a; }
+# shellcheck source=bin/_dedupe.sh
+. "$(dirname "${BASH_SOURCE[0]}")/_dedupe.sh"
 DATA_DIR="${ABBES_DATA_DIR:-/var/lib/abbes}/babylog"
 TZ_NAME="Europe/Paris"
 
@@ -52,6 +54,10 @@ feed)
     amount="$2"
     [[ "$amount" =~ ^[0-9]+$ ]] || { echo "amount_ml must be an integer" >&2; exit 2; }
     note="${3:-}"
+    if already_written baby-log feed "$amount" "$note"; then
+        echo "ALREADY LOGGED: the same feed was recorded moments ago; nothing added"
+        exit 0
+    fi
     f=$(stream_file feed)
     ensure_header "$f" "timestamp,amount_ml,note"
     row="$(TZ=$TZ_NAME date '+%Y-%m-%d %H:%M'),${amount},$(printf '%s' "$note" | tr ',\n' '; ')"
@@ -64,6 +70,10 @@ sleep)
     for t in "$start" "$end"; do
         [[ "$t" =~ ^[0-2][0-9]:[0-5][0-9]$ ]] || { echo "times must be HH:MM (24-hour)" >&2; exit 2; }
     done
+    if already_written baby-log sleep "$start" "$end" "$note"; then
+        echo "ALREADY LOGGED: the same sleep was recorded moments ago; nothing added"
+        exit 0
+    fi
     f=$(stream_file sleep)
     ensure_header "$f" "date,start,end,minutes,note"
     s=$(( 10#${start%%:*} * 60 + 10#${start##*:} ))

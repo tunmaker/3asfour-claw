@@ -94,6 +94,34 @@ function wavFormat(buf) {
   } catch { return {}; }
 }
 
+// The Pi used to strip the wake word before sending, because it did its own STT.
+// Now STT is here, so the stripping is here too — the model should not be asked
+// "يا عباس، قداش الوقت", it should be asked "قداش الوقت". Fold the same forms the
+// wake matcher folds, so عبّاس, عباس and Abbes all strip.
+function foldArabic(t) {
+  return t
+    .replace(/[\u064B-\u0652\u0670]/g, "")   // harakat
+    .replace(/[أإآٱ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function stripTrigger(text, words) {
+  if (!words?.length) return text;
+  const set = new Set(words.map((w) => foldArabic(w.trim())).filter(Boolean));
+  // Work token-wise. Folding changes length (عبّاس -> عباس), so slicing the
+  // original by a folded length cuts in the wrong place.
+  const tokens = text.trim().split(/\s+/);
+  let i = 0;
+  while (i < tokens.length) {
+    const bare = foldArabic(tokens[i]).replace(/^[\s,،.!؟:]+|[\s,،.!؟:]+$/g, "");
+    if (!set.has(bare)) break;
+    i++;
+  }
+  const rest = tokens.slice(i).join(" ").replace(/^[\s,،.]+/, "");
+  return rest || text;   // the bare name alone is a turn in its own right
+}
+
 // ------------------------------------------------------------------ the turn
 
 const gw = new GatewayClient({ url: GW_URL, envFile: ENV_FILE, log });
@@ -103,12 +131,14 @@ const gw = new GatewayClient({ url: GW_URL, envFile: ENV_FILE, log });
  * as that sentence is rendered; the caller decides whether to forward it now
  * (streaming) or collect it (blocking).
  */
-async function runTurn(wav, { onAudio, onTranscript } = {}) {
+async function runTurn(wav, { onAudio, onTranscript, triggerWords } = {}) {
   const t0 = Date.now();
   const marks = {};
 
-  const transcript = await transcribe(wav);
+  const heard = await transcribe(wav);
+  const transcript = stripTrigger(heard, triggerWords);
   marks.sttMs = Date.now() - t0;
+  if (transcript !== heard) log(`  stripped trigger: ${JSON.stringify(heard)} -> ${JSON.stringify(transcript)}`);
   onTranscript?.(transcript);
   if (!transcript) return { transcript: "", reply: "", marks, empty: true };
 
@@ -170,6 +200,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Percent-encoded by the client: HTTP headers are latin-1 and these are Arabic.
+  let triggerWords = [];
+  try {
+    triggerWords = decodeURIComponent(req.headers["x-abbes-trigger-words"] || "")
+      .split(",").map((w) => w.trim()).filter(Boolean);
+  } catch { triggerWords = []; }
+
   let wav;
   try { wav = await readBody(req); }
   catch (e) { res.writeHead(413).end(e.message); return; }
@@ -180,6 +217,7 @@ const server = http.createServer(async (req, res) => {
       const bodies = [];
       let fmt = null;
       const out = await runTurn(wav, {
+        triggerWords,
         onAudio: (buf) => { if (!fmt) fmt = wavFormat(buf); bodies.push(wavBody(buf)); },
       });
       const data = Buffer.concat(bodies);
@@ -202,6 +240,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { "content-type": "application/octet-stream",
                          "cache-control": "no-store", "x-abbes-stream": "1" });
     const out = await runTurn(wav, {
+      triggerWords,
       onTranscript: (t) => {
         const j = Buffer.from(JSON.stringify({ type: "transcript", text: t }));
         const h = Buffer.alloc(5); h.writeUInt8(1, 0); h.writeUInt32BE(j.length, 1);

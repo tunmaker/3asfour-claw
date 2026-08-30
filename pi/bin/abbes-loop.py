@@ -23,6 +23,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import abbes_wake
 from abbes_audio import RATE, MicGone, MicStream, rms_dbfs, write_tone
 from abbes_config import cfg, flag, listing
+from abbes_stream import PlaybackStream, stream_turn
 
 # tmpfs on this host, so a clip never reaches the SD card even for an instant.
 RECORD_DIR = tempfile.gettempdir()
@@ -394,6 +395,55 @@ def log_turn(transcript, reply):
     path.chmod(0o600)
 
 
+def streamed_turn(url, wav_path):
+    """One turn through the orchestrator: recording in, speech out as it renders.
+
+    Returns True when the turn was handled (including a spoken failure), False
+    only when the orchestrator could not be reached at all, so the caller can fall
+    back to the direct path rather than leaving the household with silence.
+
+    The acknowledgement tone goes through the same playback stream as the reply,
+    so the two cannot overlap and the Bluetooth sink opens exactly once per turn.
+    """
+    player = PlaybackStream(sink=cfg("SPEAKER_SINK"), log=log)
+    heard = {"text": ""}
+    words = ",".join(x for x in (cfg("WAKE_CANDIDATES", ""), cfg("WAKE_WORDS", "")) if x)
+
+    def note(t):
+        heard["text"] = t
+        log(f"TRANSCRIPT: {t}")
+
+    try:
+        try:
+            player.write_wav(ack_wav().read_bytes())
+        except Exception as e:
+            log(f"ack unavailable: {e}")
+        out = stream_turn(url, wav_path, player,
+                          timeout=cfg("ORCHESTRATOR_TIMEOUT", "180", float),
+                          trigger_words=words, on_transcript=note, log=log)
+    except Unreachable as e:
+        player.flush()
+        log(f"FAILED: {e}")
+        if str(e).startswith("orchestrator:"):
+            return False
+        log_turn(heard["text"], "")
+        speak_failure()
+        return True
+    finally:
+        player.close()
+
+    reply = out.get("reply", "")
+    marks = out.get("marks", {})
+    log(f"REPLY: {reply}")
+    if marks:
+        log(f"  stt {marks.get('sttMs')}ms  first-token {marks.get('firstDeltaMs')}ms  "
+            f"first-audio {marks.get('firstAudioMs')}ms  total {marks.get('totalMs')}ms")
+    log_turn(heard["text"], reply)
+    if not reply:
+        speak_failure()
+    return True
+
+
 def one_turn(stream, preroll=b"", start_window=None):
     """Record and answer one request.
 
@@ -411,6 +461,13 @@ def one_turn(stream, preroll=b"", start_window=None):
         if record_until_silence(stream, tmp, start_window, preroll) is None:
             log("no speech detected, back to idle")
             return False
+
+        orch = cfg("ORCHESTRATOR_URL")
+        if orch:
+            with muted(stream):
+                if streamed_turn(orch, tmp):
+                    return True
+                log("orchestrator unreachable, falling back to the direct path")
 
         with muted(stream):
             try:

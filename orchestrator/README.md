@@ -154,9 +154,61 @@ place to force a cut in an over-long run, because it is where a speaker breathes
 the sentence; `19:` + `09.` split into two utterances before this was fixed. Only a
 flush may cut at the end of what has arrived.
 
+---
+
+# Phase 2.3 and 3 — wired in
+
+The Pi now sends the recording to `/turn/stream` and plays each sentence as it
+lands. Set `ORCHESTRATOR_URL` in `voicepi.env` to use it; **comment it out and the
+loop falls back to the direct path**, which is still fully present. If the
+orchestrator cannot be reached at all the loop falls back on its own, mid-turn,
+rather than leaving the household with silence.
+
+Live turn, measured through the microphone:
+
+    stt 3013ms  first-token 1280ms  first-audio 5385ms  total 7386ms
+
+STT is long there because the test recording was 21.5 s of clipped audio played at
+the microphone; a normal turn measures 160–400 ms.
+
+## What moved to the orchestrator
+
+**Trigger stripping.** The Pi used to strip the wake word before sending, because
+it did its own STT. STT is server-side now, so the Pi passes `WAKE_CANDIDATES` and
+`WAKE_WORDS` in a header and the orchestrator strips them, folding the same forms
+the wake matcher folds so عبّاس, عباس and Abbes all match.
+
+That header is **percent-encoded**: HTTP headers are latin-1 and the wake words are
+Arabic. Sending them raw raises `'latin-1' codec can't encode characters`, which is
+exactly how the first live turn failed.
+
+**Playback.** One `pw-cat --playback -` per turn, fed raw PCM, instead of one
+`pw-play` per file. The acknowledgement tone goes through the same stream as the
+reply, so the two cannot overlap and the sink opens exactly once. Combined with the
+WirePlumber `session.suspend-timeout-seconds = 0` rule, the sink never suspends
+between sentences.
+
+## Phase 3 — write-once guards
+
+`bin/_dedupe.sh`, sourced by `grocery.sh`, `baby-log.sh` and `calendar.sh`.
+
+The model composes these command lines, so there is no turn id to thread through
+from the orchestrator. The guard is content-based instead: the same verb with the
+same arguments inside `DEDUPE_WINDOW_SECS` (default 90) is treated as the same
+write and becomes a no-op that says so. Set the window to 0 to disable it.
+
+The window is short on purpose. "Add milk" twice in a minute is a retry; twice in
+an afternoon is two errands.
+
+This is what decouples "did the stream survive" from "did the side effect land",
+which is the thing that forced the never-retry rule in the first place.
+
 ## Still to do
 
-- Wire the Pi to `/turn/stream` and retire the SSH forced command for voice (2.3).
-- Persistent playback stream on the Pi, so chunks play as they land.
-- Filler cue on `session.tool`, which the client half of does not exist yet.
-- Idempotency keys through the nine shell scripts (Phase 3).
+- Filler cue on `session.tool`. The orchestrator sees the event and logs it; it
+  does not yet emit a cue frame, and the Pi does not yet hold filler clips. This is
+  the highest-value remaining item: first token took 10.3 s on a turn that read
+  files, and nothing covers that silence.
+- Shorten `WAKE_MUTE_TAIL_SECS` from its 1.5 s guess now that the persistent stream
+  can report real drain timing.
+- Input streaming (Phase 4) and barge-in (Phase 5).
