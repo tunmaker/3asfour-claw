@@ -43,6 +43,8 @@ instead of silently writing to the wrong place.
 | `ABBES_DATA_DIR` | Local runtime data (default `/var/lib/abbes`) |
 | `ABBES_BACKUP_DEST` | Backup destination |
 | `ABBES_BACKUP_MOUNT` | Mountpoint that must be live before backing up |
+| `ABBES_SPEAKER_SSH` | `user@host` of the voice satellite |
+| `ABBES_SPEAKER_KEY` | Private key for the satellite's volume forced command |
 
 ## 3. Access
 
@@ -71,6 +73,7 @@ The agent has no general shell. It may run exactly these scripts, allowlisted in
 | `baby-log.sh` | Append-only feed and sleep log |
 | `quran.sh` | Read-only retrieval from a local Qur'an text |
 | `whisper-transcribe.sh` | Speech-to-text |
+| `speaker.sh` | Volume of the agent's own speech on the voice satellite |
 
 The exec allowlist lives outside `openclaw.json`. Moving a deployment without
 copying `exec-approvals.json` makes every tool call fail with
@@ -123,6 +126,11 @@ path.
 - The agent's write access to the vault is enforced by filesystem permissions, not
   by instructions in the prompt: it can read the vault and write only inside its own
   folder.
+- Reaching the voice satellite is enforced the same way. `speaker.sh` uses a key
+  whose `authorized_keys` entry is `restrict,command="/usr/local/bin/abbes-volume"`,
+  so that key can only adjust the speaker volume: it gets no shell, no pty and no
+  forwarding, and the command itself pattern-matches every argument before it
+  reaches `pactl`.
 
 Assume the model is susceptible to prompt injection from any text it ingests, and
 keep the exec allowlist narrow accordingly.

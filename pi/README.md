@@ -23,6 +23,7 @@ addresses, no tokens — the speaker's address is passed as an argument or via
 | `bin/wake-listen.sh` | Runs the detector on its own for debugging. |
 | `bin/wake-tally.sh` | Summarises recorded trigger times, for judging false positives. |
 | `wake-decoys.txt` | Competing words for the wake grammar. Install to `~/.config/voicepi/`. |
+| `bin/abbes-volume` | Speaker volume, as an SSH forced command. Install to `/usr/local/bin`. |
 
 ## Running
 
@@ -251,15 +252,17 @@ Loop output goes to the system journal, not the user journal:
 ### Not hearing yourself
 
 The microphone is hard-muted for the whole turn after recording ends: chunks are dropped
-at the source and the recogniser is reset. `play()` also waits out the real duration of the
-audio, because `pw-play` returns once the sink has *accepted* the samples, which over
-Bluetooth is well before the speaker has emitted them. Then `WAKE_MUTE_TAIL_SECS` covers
-the remaining latency.
+at the source and the recogniser is reset. `WAKE_MUTE_TAIL_SECS` then keeps it muted past
+the end of playback, covering Bluetooth latency and the room's own reverb tail.
 
-Both parts were needed. With a 0.7s tail and no drain wait, a follow-up window recorded
-the last word of Abbes's own reply and sent it back to the gateway. Verified fixed: asked
-to say its own name, Abbes answered `...وسمّيتني "عباس" قبيلة...` through the speaker and
-did not wake itself, and the follow-up window stayed silent.
+That tail is what matters. At 0.7s a follow-up window recorded the last word of Abbes's
+own reply and sent it back to the gateway; 1.5s fixed it. `play()` additionally waits out
+the file's real duration, which measurement later showed is redundant — `pw-play` already
+blocks for the full length (7.3s for a 7.2s file), cold sink or warm. It is kept as a cheap
+guard against a player that does not.
+
+Verified: asked to say its own name, Abbes answered `...وسمّيتني "عباس" قبيلة...` through
+the speaker, did not wake itself, and the follow-up window stayed silent.
 
 ### Known limits
 
@@ -269,6 +272,24 @@ did not wake itself, and the follow-up window stayed silent.
   re-recorded — a harsher path than a person talking to the microphone, and not a
   substitute for a real tuning session.
 - The 375 MB model leaves roughly 350 MB free. Nothing else should move onto this Pi.
+
+## Speaker volume
+
+`bin/abbes-volume`, installed to `/usr/local/bin/abbes-volume`, reads and sets the volume
+of `SPEAKER_SINK`. It exists so Abbes can be told out loud to be quieter, and it is reached
+from the gateway host over SSH:
+
+    restrict,command="/usr/local/bin/abbes-volume" ssh-ed25519 AAAA... openclaw-speaker
+
+That entry is the whole of what the gateway can do on this Pi. The key gets no shell, no
+pty and no forwarding, and the script matches every argument against a fixed pattern before
+it reaches `pactl` — `set "99; rm -rf /"` is rejected, not escaped.
+
+    abbes-volume get | up | down | set <0-100> | mute | unmute
+
+`VOLUME_STEP` (default 10) and `VOLUME_MAX` (default 100) are read from `voicepi.env`.
+`XDG_RUNTIME_DIR` is set explicitly because a non-login SSH session does not get one, and
+without it `pactl` cannot find the user's PipeWire socket.
 
 ## Talking to the gateway
 
