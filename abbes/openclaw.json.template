@@ -396,7 +396,10 @@
         "note-add.sh",
         "note-search.sh",
         "baby-log.sh",
-        "quran.sh"
+        "quran.sh",
+        "prayer.sh",
+        "look.sh",
+        "weather.sh"
       ]
     },
     "fs": {

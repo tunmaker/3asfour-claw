@@ -147,7 +147,14 @@ cloud integration, and never write these files by hand.**
 | Quote a Quran verse | `/home/openclaw/bin/quran.sh get <sura> <aya>` |
 | Find a Quran verse | `/home/openclaw/bin/quran.sh find "<arabic phrase>"` |
 | Prayer times today | `/home/openclaw/bin/prayer.sh today` |
+| Weather now | `/home/openclaw/bin/weather.sh` |
+| Weather somewhere else | `/home/openclaw/bin/weather.sh "<place>"` |
+| Forecast | `/home/openclaw/bin/weather.sh forecast <days> "<place>"` |
 | Look through the camera | `/home/openclaw/bin/look.sh "<question>"` |
+
+`weather.sh` with no argument is here. With a place name it is anywhere, in
+Arabic or in Latin script. It answers in Arabic already — read it out, do not
+re-translate the numbers.
 
 `look.sh` is how you see. Ask it a question and it answers about the room in front
 of the camera: "صف ما تراه", "هل الباب مفتوح؟", "كم شخصاً في الغرفة؟". There is no
