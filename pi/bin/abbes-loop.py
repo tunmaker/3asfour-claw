@@ -21,6 +21,7 @@ import wave
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import abbes_wake
+from abbes_announce import AnnounceListener, announce_url
 from abbes_audio import RATE, MicGone, MicStream, rms_dbfs, write_tone
 from abbes_config import cfg, flag, listing
 from abbes_stream import PlaybackStream, stream_turn
@@ -33,6 +34,7 @@ RECORD_DIR = tempfile.gettempdir()
 FAILURE_PHRASE = cfg("FAILURE_PHRASE", "لا أستطيع الإجابة الآن")
 ACK_PHRASE = cfg("ACK_PHRASE", "لحظة")
 PROMPT_PHRASE = cfg("PROMPT_PHRASE", "نعم؟")
+RECONNECT_PHRASE = cfg("RECONNECT_PHRASE", "عاد الاتصال")
 
 
 class Unreachable(Exception):
@@ -410,6 +412,12 @@ def prompt_wav():
     return cached_phrase("prompt", PROMPT_PHRASE)
 
 
+def reconnect_wav():
+    # Local only, for the same reason as the failure phrase: this is what gets
+    # said after the link to the machine that renders speech has been down.
+    return cached_phrase("reconnect", RECONNECT_PHRASE, local_only=True)
+
+
 def speak_failure():
     try:
         play(failure_wav())
@@ -691,6 +699,41 @@ def ensure_vosk():
                       dict(os.environ, ABBES_REEXEC="1"))
 
 
+def start_announce_listener(stream):
+    """Attach the downlink, or explain why there is none and carry on.
+
+    A missing announce link must never stop the Pi answering questions, so every
+    failure here is logged and swallowed. Proactive speech is the extra.
+    """
+    if not flag("ANNOUNCE_ENABLED", True):
+        log("announce: disabled")
+        return None
+    url = cfg("ORCHESTRATOR_URL")
+    if not url:
+        log("announce: no ORCHESTRATOR_URL, downlink off")
+        return None
+
+    def notice(gap_secs):
+        log(f"announce: link was down {gap_secs:.0f}s, saying so")
+        with muted(stream):
+            player = PlaybackStream(sink=cfg("SPEAKER_SINK"), log=log)
+            try:
+                player.write_wav(reconnect_wav().read_bytes())
+            finally:
+                player.close()
+
+    listener = AnnounceListener(
+        announce_url(url),
+        make_player=lambda: PlaybackStream(sink=cfg("SPEAKER_SINK"), log=log),
+        mute_ctx=lambda: muted(stream),
+        log=log,
+        on_reconnect=notice,
+        reconnect_notice_secs=cfg("RECONNECT_NOTICE_SECS", "120", float),
+    )
+    listener.start()
+    return listener
+
+
 def main():
     global MATCHER
     ensure_vosk()
@@ -725,6 +768,7 @@ def main():
     fifo = watch_fifo(manual)
     tally = cfg("WAKE_TALLY") if flag("WAKE_TALLY_ENABLED") else None
     play_tone = flag("WAKE_TONE", True)
+    start_announce_listener(stream)
     log(f"idle. say the name{'' if listener else ' (wake word off)'}, or: echo go > {fifo}")
 
     while True:

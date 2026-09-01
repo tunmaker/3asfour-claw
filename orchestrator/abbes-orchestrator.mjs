@@ -6,14 +6,22 @@
 //
 //   POST /turn        WAV in -> WAV out. Blocking, same shape as before.
 //   POST /turn/stream WAV in -> WAV chunks out, one per sentence, as they render.
+//   GET  /announce/stream  Held open by the Pi. Speech Abbes was not asked for.
+//   POST /announce         Text in, spoken on the open stream. Cron delivers here.
 //   GET  /health
 //
 // Phase 2.1 is /turn. Phase 2.2 is /turn/stream. Both share one pipeline so the
 // only difference is when bytes leave.
+//
+// The announce pair is the other direction, and it is the only way Abbes speaks
+// without being spoken to. Everything that wants to interrupt the household goes
+// through one door, so the quiet-hours veto and the never-talk-over-a-turn rule
+// live in one place instead of in every caller.
 
 import http from "node:http";
 import { GatewayClient } from "./gateway-client.mjs";
 import { Chunker } from "./sentences.mjs";
+import { QuietHours } from "./quiet.mjs";
 
 const PORT        = +(process.env.ABBES_ORCH_PORT || 18790);
 const GW_URL      = process.env.GW_URL      || "ws://127.0.0.1:18789";
@@ -30,7 +38,11 @@ function required(name) {
   process.exit(2);
 }
 
+const ANNOUNCE_WAIT = +(process.env.ANNOUNCE_WAIT_MS || 45000);
+
 const log = (...a) => console.log(`[${new Date().toISOString().slice(11, 23)}]`, ...a);
+
+const quiet = new QuietHours({ envFile: ENV_FILE, log });
 
 // ---------------------------------------------------------------- speech in
 
@@ -172,6 +184,107 @@ async function runTurn(wav, { onAudio, onTranscript, triggerWords } = {}) {
   return { transcript, reply: turn.text, tools: turn.tools, marks };
 }
 
+// ----------------------------------------------------------------- announce
+
+// Same framing as /turn/stream -- one byte of kind, four of big-endian length --
+// so the Pi reuses its reader. Downlink kinds are 0x8x to keep them distinct in
+// a log from the uplink kinds a turn uses.
+const F_SPEECH = 0x81, F_SPEECH_END = 0x82, F_CONTROL = 0x83;
+
+function writeFrame(res, kind, body) {
+  const h = Buffer.alloc(5);
+  h.writeUInt8(kind, 0);
+  h.writeUInt32BE(body.length, 1);
+  return res.write(Buffer.concat([h, body]));
+}
+
+const listeners = new Set();
+
+// A turn already owns the speaker. Announcing into one would talk over Abbes
+// answering a question, which is worse than being late.
+let turnsInFlight = 0;
+const idle = [];
+function turnStarted() { turnsInFlight++; }
+function turnEnded() {
+  turnsInFlight = Math.max(0, turnsInFlight - 1);
+  if (turnsInFlight === 0) while (idle.length) idle.shift()();
+}
+function whenIdle(timeoutMs) {
+  if (turnsInFlight === 0) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const done = (v) => { clearTimeout(timer); const i = idle.indexOf(fn); if (i >= 0) idle.splice(i, 1); resolve(v); };
+    const fn = () => done(true);
+    const timer = setTimeout(() => done(false), timeoutMs);
+    idle.push(fn);
+  });
+}
+
+// One announcement at a time, in order. Two overlapping ones would interleave
+// their sentences on the same playback stream and be unintelligible.
+let announceQueue = Promise.resolve();
+
+/**
+ * Speak text nobody asked for. Returns why it did not happen, or null on success.
+ * Every refusal is a normal outcome and is logged, not thrown.
+ */
+function announce(text, { source = "unknown" } = {}) {
+  const job = announceQueue.then(async () => {
+    const clean = String(text || "").trim();
+    if (!clean) return { skipped: "empty" };
+    if (quiet.blocks()) {
+      log(`announce refused (quiet hours) from ${source}: ${JSON.stringify(clean.slice(0, 60))}`);
+      return { skipped: "quiet-hours" };
+    }
+    if (listeners.size === 0) {
+      log(`announce dropped (nobody listening) from ${source}`);
+      return { skipped: "no-listener" };
+    }
+    if (!(await whenIdle(ANNOUNCE_WAIT))) {
+      log(`announce dropped (a turn held the speaker for ${ANNOUNCE_WAIT}ms) from ${source}`);
+      return { skipped: "busy" };
+    }
+    // Re-check: the wait above can cross into the quiet window.
+    if (quiet.blocks()) {
+      log(`announce refused (quiet hours, after waiting) from ${source}`);
+      return { skipped: "quiet-hours" };
+    }
+
+    const t0 = Date.now();
+    const chunker = new Chunker();
+    let spoken = 0;
+    for (const sentence of [...chunker.push(clean), ...chunker.end()]) {
+      const audio = await synthesize(sentence);
+      for (const res of listeners) writeFrame(res, F_SPEECH, audio);
+      spoken++;
+    }
+    for (const res of listeners) writeFrame(res, F_SPEECH_END, Buffer.from(JSON.stringify({ text: clean })));
+    log(`announce from ${source}: ${spoken} sentence(s), ${Date.now() - t0}ms, ${listeners.size} listener(s)`);
+    return { spoken, ms: Date.now() - t0 };
+  }).catch((e) => {
+    log("announce failed:", e.message);
+    return { skipped: "error", error: e.message };
+  });
+  announceQueue = job.then(() => {}, () => {});
+  return job;
+}
+
+// Cron's webhook delivery and a hand-rolled curl do not agree on where the text
+// lives, so accept the shapes we actually see and say so when we cannot find it.
+function announceText(body) {
+  if (typeof body === "string") return body;
+  if (!body || typeof body !== "object") return null;
+  for (const k of ["text", "message", "reply", "notificationText", "content"]) {
+    if (typeof body[k] === "string" && body[k].trim()) return body[k];
+  }
+  for (const k of ["result", "payload", "data", "run"]) {
+    if (body[k] && typeof body[k] === "object") {
+      const nested = announceText(body[k]);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
 // -------------------------------------------------------------------- server
 
 async function readBody(req, limit = 32 * 1024 * 1024) {
@@ -189,8 +302,55 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
 
   if (req.method === "GET" && url.pathname === "/health") {
+    const win = quiet.window();
     res.writeHead(gw.ready ? 200 : 503, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: gw.ready, gateway: gw.ready ? "connected" : "down" }));
+    res.end(JSON.stringify({
+      ok: gw.ready,
+      gateway: gw.ready ? "connected" : "down",
+      listeners: listeners.size,
+      turnsInFlight,
+      quietHours: win ? win.spec : null,
+      quietNow: quiet.blocks(),
+    }));
+    return;
+  }
+
+  // Held open by the Pi for the life of its process. Nothing is written until
+  // there is something to say, so an idle household costs one open socket.
+  if (req.method === "GET" && url.pathname === "/announce/stream") {
+    res.writeHead(200, {
+      "content-type": "application/octet-stream",
+      "cache-control": "no-store",
+      "x-abbes-announce": "1",
+    });
+    listeners.add(res);
+    log(`announce listener attached (${listeners.size} total)`);
+    writeFrame(res, F_CONTROL, Buffer.from(JSON.stringify({ type: "hello", quietHours: quiet.window()?.spec ?? null })));
+    const drop = () => {
+      if (listeners.delete(res)) log(`announce listener gone (${listeners.size} left)`);
+    };
+    req.on("close", drop);
+    req.on("error", drop);
+    res.on("error", drop);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/announce") {
+    let body;
+    try { body = JSON.parse((await readBody(req, 256 * 1024)).toString("utf8") || "{}"); }
+    catch (e) { res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "bad json: " + e.message })); return; }
+
+    const text = announceText(body);
+    if (!text) {
+      log("announce: no text found in payload, keys:", Object.keys(body || {}).join(","));
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "no text in payload", sawKeys: Object.keys(body || {}) }));
+      return;
+    }
+    const source = String(body.source || req.headers["x-abbes-source"] || "http");
+    const out = await announce(text, { source });
+    res.writeHead(out.skipped ? 202 : 200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: !out.skipped, ...out }));
     return;
   }
 
@@ -211,6 +371,7 @@ const server = http.createServer(async (req, res) => {
   try { wav = await readBody(req); }
   catch (e) { res.writeHead(413).end(e.message); return; }
 
+  turnStarted();
   try {
     if (!streaming) {
       // Phase 2.1: collect everything, answer with one WAV. Same shape as before.
@@ -261,6 +422,8 @@ const server = http.createServer(async (req, res) => {
     log("turn failed:", e.message);
     if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain" });
     res.end("turn failed: " + e.message);
+  } finally {
+    turnEnded();
   }
 });
 
