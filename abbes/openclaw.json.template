@@ -431,5 +431,14 @@
         "<family-group-jid>@g.us": {}
       }
     }
+  },
+  "messages": {
+    "groupChat": {
+      "mentionPatterns": [
+        "عباس",
+        "3asfour",
+        "abbes"
+      ]
+    }
   }
 }
