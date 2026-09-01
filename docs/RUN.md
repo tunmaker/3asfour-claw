@@ -163,6 +163,17 @@ satellite key a shell -- is a bigger decision than it looks.
 
 ## 8. Common operations
 
+The gateway unit runs with `PrivateTmp=true`: a command the agent runs through
+`exec` sees a different `/tmp` than your shell does. When debugging a tool from
+the agent side, write its logs under `$HOME`, not `/tmp`, or they will appear to
+vanish.
+
+A tool script must not `exec` into a program that closes inherited file
+descriptors (OpenSSH does). The exec supervisor watches an inherited pipe to
+know the command tree is alive, and treats its early close as the tree having
+died: the group is SIGTERMed 100ms later. Run such programs as a child of the
+script instead. `speaker.sh` is the worked example.
+
 ```bash
 systemctl --user status openclaw-gateway
 journalctl --user -u openclaw-gateway -f
