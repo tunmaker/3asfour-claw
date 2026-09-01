@@ -9,7 +9,6 @@ PACKAGES=(
     pipewire-audio
     pipewire-pulse
     wireplumber
-    libspa-0.2-bluetooth
     pulseaudio-utils
 )
 
@@ -18,23 +17,18 @@ sudo -n apt-get install -y -qq "${PACKAGES[@]}"
 
 sudo -n loginctl enable-linger "$USER"
 
-# WirePlumber gates the BlueZ monitor on being the active seat; SSH sessions have none.
 mkdir -p ~/.config/wireplumber/wireplumber.conf.d
-cat > ~/.config/wireplumber/wireplumber.conf.d/50-headless-bluez.conf <<'CONF'
-wireplumber.profiles = {
-  main = {
-    monitor.bluez.seat-monitoring = disabled
-  }
-}
-CONF
 
-# Streaming TTS pushes one sentence at a time. Letting the sink suspend in the gaps
-# pays the A2DP wake-up on every sentence, which is audible as a stutter.
-cat > ~/.config/wireplumber/wireplumber.conf.d/51-bluez-no-suspend.conf <<'CONF'
-monitor.bluez.rules = [
+# Streaming TTS pushes one sentence at a time. Letting the sink suspend in the
+# gaps costs a wake-up on every sentence, audible as a click at each boundary.
+# This mattered enormously over Bluetooth and still matters a little over the
+# jack, and it costs nothing to keep the output awake on a machine whose only
+# job is to speak.
+cat > ~/.config/wireplumber/wireplumber.conf.d/51-alsa-no-suspend.conf <<'CONF'
+monitor.alsa.rules = [
   {
     matches = [
-      { node.name = "~bluez_output.*" }
+      { node.name = "~alsa_output.*" }
     ]
     actions = {
       update-props = {
@@ -44,6 +38,11 @@ monitor.bluez.rules = [
   }
 ]
 CONF
+
+# Any BlueZ configuration from when the speaker was wireless. Left behind it
+# would keep re-adding a device we deliberately stopped using.
+rm -f ~/.config/wireplumber/wireplumber.conf.d/50-headless-bluez.conf \
+      ~/.config/wireplumber/wireplumber.conf.d/51-bluez-no-suspend.conf
 
 systemctl --user daemon-reload
 systemctl --user enable --now pipewire.socket pipewire-pulse.socket wireplumber.service

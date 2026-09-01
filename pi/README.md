@@ -3,19 +3,16 @@
 Scripts that run on the Raspberry Pi that carries audio between the household and
 Abbes. The Pi does nothing else: record, transcribe, ask the gateway, speak.
 
-Everything here is committed and safe to publish. No hostnames, no IPs, no MAC
-addresses, no tokens — the speaker's address is passed as an argument or via
-`BT_SPEAKER_MAC` in a gitignored `.env` on the Pi.
+Everything here is committed and safe to publish. No hostnames, no IPs, no
+tokens — the private values live in a gitignored `.env` on the Pi.
 
 ## Layout
 
 | Path | What it does |
 |---|---|
-| `bin/pi-recon.sh` | Prints host, audio devices, audio server, and Bluetooth state. Read-only. |
-| `bin/bt-enable.sh` | Clears the Bluetooth rfkill block and powers the adapter on. Needs root. |
-| `bin/audio-stack-install.sh` | Installs PipeWire + WirePlumber + the BlueZ SPA plugin and configures them for a headless host. |
-| `bin/bt-pair.sh` | Pairs, trusts, and connects a Bluetooth audio device. Takes a MAC. |
-| `bin/bt-audio-test.sh` | Plays a tone over A2DP, then records over HFP and reports levels. Takes a MAC. |
+| `bin/pi-recon.sh` | Prints host, audio devices, audio server, and output routing. Read-only. |
+| `bin/audio-stack-install.sh` | Installs PipeWire + WirePlumber and configures them for a headless host. |
+| `bin/abbes-camera-reset.sh` | Unwedges the USB webcam. See the camera note below. |
 | `bin/vosk-install.sh` | Installs Vosk in a venv and downloads one small offline model. |
 | `bin/abbes_wake.py` | Wake-word detector. Importable, and runnable standalone with `--listen`. |
 | `bin/abbes_audio.py` | The single shared microphone stream, its pre-roll ring buffer, and level metering. |
@@ -32,7 +29,6 @@ Run over SSH from a checkout:
 
     ssh PI 'bash -s' < pi/bin/pi-recon.sh
     ssh PI 'bash -s' < pi/bin/audio-stack-install.sh
-    ssh PI 'bash -s AA:BB:CC:DD:EE:FF' < pi/bin/bt-pair.sh
 
 The loop is no longer a single file — `abbes-loop.py` imports `abbes_wake`,
 `abbes_audio` and `abbes_config` from the same directory — so copy them together
@@ -43,34 +39,33 @@ rather than piping one over stdin:
 
 ## Notes on this hardware
 
-**Adapter.** On-board BCM43430A1 on the UART. Its rfkill state is persisted by
-`systemd-rfkill` in `/var/lib/systemd/rfkill/`, so one unblock survives reboot; BlueZ
-then powers the controller on at boot via the default `AutoEnable=true`.
+**Output is the 3.5mm jack**, wired to the speaker's aux input. It was Bluetooth, and
+that is worth recording because the failure was not obvious.
 
-**The headless BlueZ trap.** WirePlumber's `main` profile gates its BlueZ monitor on
-`monitor.bluez.seat-monitoring`, which only fires for a session on the active seat. An
-SSH session has no seat, so the monitor never loads, no A2DP endpoint is registered
-with BlueZ, and `connect` fails with `br-connection-profile-unavailable` — after which
-some speakers silently drop the bond. The drop-in in `audio-stack-install.sh` disables
-seat monitoring and fixes both symptoms. If Bluetooth audio ever goes missing after a
-reinstall, check that file first.
+The speaker had only ever paired as a *headset*: its cached record listed the Headset
+UUID and nothing else, so PipeWire gave it `headset-head-unit` and `a2dp-sink` was never
+offered. That profile is mono 8kHz CVSD — telephone quality — which is why spoken
+replies were faint and muffled, and why a stray Bluetooth microphone kept appearing
+alongside. Getting A2DP needed a re-pair; the re-pair needed the speaker in pairing
+mode; and the adapter wedged partway through (`hci0 DOWN`, `Can't init device hci0:
+Connection timed out`, `Failed to set mode: Authentication Failed`). A cable has none
+of these states.
 
-**Profiles are exclusive.** A headset gives you `a2dp-sink` (stereo 48kHz playback, no
-mic) *or* `headset-head-unit` (mono 8kHz CVSD, playback **and** mic) — never both. The
-loop must either sit in the headset profile throughout, or switch per turn and pay the
-profile-change delay.
+What the cable removes, beyond the noise: a device that renegotiates its profile on
+every reconnect, a sink whose name changes with it, WirePlumber auto-switching to the
+headset profile whenever anything opens a microphone, a speaker that restores its own
+saved volume behind us, and a bond that did not survive a reboot because this speaker
+stores no link key.
 
-**Mic level is low.** Expect a noise floor around −49 dBFS and normal speech well under
-−30 dBFS at arm's length. Normalise before sending audio to whisper; a gain of roughly
-x3.5 brought a real utterance to −3 dBFS.
+If Bluetooth is ever wanted again, the thing to get right is the pairing: pair it while
+it advertises A2DP, and check `pactl list cards` offers `a2dp-sink` before believing it
+works. `headset-head-unit` as the only option means it paired as a headset.
 
-**What survives a reboot, and what does not.** Verified by rebooting: the rfkill unblock
-and the powered-on adapter come back on their own, and the WirePlumber drop-in keeps
-working, so the bluez card reappears once a device connects. The *bond does not survive*.
-This speaker stores no link key — its `info` file under `/var/lib/bluetooth` has no
-`[LinkKey]` section — so after every boot it reports `Trusted: yes, Paired: no` and must
-be paired again. `bt-pair.sh` clears the half-bond and re-pairs, and is safe to run on
-every boot; the loop will need to call it before it can expect audio.
+**Mic level is low, and it moves.** The same microphone at the same gain measured a
+−24.8 dBFS noise floor at 3am and −36.3 at 4pm. A fixed threshold is therefore wrong
+twice a day: one set for the quiet hours left the assistant completely deaf in the
+afternoon, with 0 of 39 windows crossing it. The gate now tracks the floor — see
+`abbes_wake.Listener` and `abbes_wake_test.py`. Do not replace it with a constant.
 
 ## Reaching the other two hosts
 
@@ -98,7 +93,7 @@ binds loopback on its own host by design. The tunnel restarts on failure and sta
 boot. Note that a dead tunnel is indistinguishable from a dead gateway at the HTTP layer,
 so the loop's failure path must cover both.
 
-**Transcription quality over the Bluetooth mic is not usable.** The HFP link is 8kHz CVSD.
+**Transcription quality over a Bluetooth mic is not usable.** The HFP link is 8kHz CVSD.
 Recorded speech plays back intelligibly to a human, but whisper medium returns
 hallucinations from it — including a repeat-loop on `language=auto`. This is the narrowband
 channel, not the model: a headset profile cannot do better than 8kHz. A USB microphone at
@@ -264,7 +259,7 @@ a property of this Pi's journald, not of user units in general.
 
 The microphone is hard-muted for the whole turn after recording ends: chunks are dropped
 at the source and the recogniser is reset. `WAKE_MUTE_TAIL_SECS` then keeps it muted past
-the end of playback, covering Bluetooth latency and the room's own reverb tail.
+the end of playback, covering output latency and the room's own reverb tail.
 
 That tail is what matters. At 0.7s a follow-up window recorded the last word of Abbes's
 own reply and sent it back to the gateway; 1.5s fixed it. `play()` additionally waits out
@@ -279,7 +274,7 @@ the speaker, did not wake itself, and the follow-up window stayed silent.
 
 - Recall on the **bare name alone** is weaker than on "يا عباس" followed by a request.
   A short isolated word gives the decoder little to work with.
-- All figures above are from synthetic speech played through the Bluetooth speaker and
+- All figures above are from synthetic speech played through the speaker and
   re-recorded — a harsher path than a person talking to the microphone, and not a
   substitute for a real tuning session.
 - The 375 MB model leaves roughly 350 MB free. Nothing else should move onto this Pi.
@@ -398,15 +393,13 @@ agent.
 
 ## Boot
 
-`abbes-audio.service` runs before the loop and re-pairs the Bluetooth speaker, waits for
-its PipeWire card to appear, selects the A2DP profile and makes it the default sink. It is
-needed because this speaker stores no link key, so the bond does not survive a reboot.
-It retries every 30s on failure, which covers the speaker simply being switched off at
-boot, and `abbes-loop.service` only `Wants` it — the loop still starts if pairing fails,
-so a missing speaker does not take the whole thing down.
+`abbes-audio.service` runs before the loop: it waits for PipeWire, selects the analog
+sink, routes the card to the jack rather than HDMI, and pins the volume to
+`SPEAKER_BOOT_VOLUME`. `abbes-loop.service` only `Wants` it, so the loop still starts if
+audio setup fails — a silent assistant that hears you is better than none at all.
 
-Set `BT_SPEAKER_MAC` in `voicepi.env` to enable it; leave it empty and the service exits
-cleanly, which is what you want once a USB speakerphone replaces the Bluetooth one.
+Volume is pinned rather than left alone because it drifts otherwise, and an unpinned
+level silently leaves Abbes too quiet to hear.
 
 **Quote any config value containing spaces.** `voicepi.env` is read both by the Python
 loop and sourced by shell scripts. An unquoted `WHISPER_PROMPT` made bash try to execute

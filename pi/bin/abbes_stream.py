@@ -5,8 +5,8 @@ SSH, Piper, then play a whole file. This is one request. Audio starts at the fir
 sentence instead of the last, and the Pi does no orchestration at all.
 
 Playback goes through a single long-lived `pw-cat` rather than one `pw-play` per
-file, so the Bluetooth sink never suspends between sentences. A suspend costs the
-A2DP wake-up and is audible as a stutter at every sentence boundary.
+file, so the sink never suspends between sentences. A suspend costs a wake-up and
+is audible as a click at every sentence boundary.
 
 Stdlib only, like the rest of the loop.
 """

@@ -21,11 +21,9 @@ arecord -l 2>&1
 
 section "audio server"
 systemctl --user is-active pipewire wireplumber pulseaudio 2>&1
-dpkg -l 2>/dev/null | awk '/pipewire|wireplumber|pulseaudio|bluez|bluealsa/ {print $2, $3}'
+dpkg -l 2>/dev/null | awk '/pipewire|wireplumber|pulseaudio/ {print $2, $3}'
 
-section "bluetooth"
-systemctl is-enabled bluetooth
-systemctl is-active bluetooth
-rfkill list bluetooth 2>&1
-bluetoothctl show 2>&1 | grep -E 'Controller|Powered|PowerState|Discoverable'
-bluetoothctl devices 2>&1
+section "output"
+pactl get-default-sink 2>&1
+pactl list sinks short 2>&1
+amixer -c 0 cget numid=3 2>&1 | tail -1
