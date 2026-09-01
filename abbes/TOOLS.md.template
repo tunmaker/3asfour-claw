@@ -1,0 +1,43 @@
+# TOOLS.md — template
+
+The real file lives at `~/.openclaw/workspace/TOOLS.md` on the gateway host and is
+**not** in this repository: it describes rooms, devices and hosts, which is exactly
+the sort of thing that must not be published. Copy this, fill it in there.
+
+It ships as a stock OpenClaw template full of worked examples, and leaving it that
+way is not harmless. The examples include a list of named cameras:
+
+```
+### Cameras
+- living-room → Main area, 180° wide angle
+- front-door  → Entrance, motion-triggered
+```
+
+Asked to look through the camera, the assistant read those and replied that no
+cameras were attached and it needed to be told which one to use — inventing a
+parameter `look.sh` does not take, from a file describing a house that is not this
+one. Placeholder text in the prompt is not inert; the model cannot tell an example
+from a fact.
+
+---
+
+## Cameras
+
+There is one camera and it takes no argument.
+
+- `look.sh "<question>"` asks about whatever it currently sees. There is no
+  camera to choose, no shutter to press and nothing to wait for.
+
+## Speaker
+
+- Output is the Pi's 3.5mm jack into the speaker's aux input. There is no
+  Bluetooth device to select and no profile to switch.
+
+## Hosts
+
+Describe them by role, not by address. The assistant never needs an IP, and
+writing one here puts it one careless copy away from a public repository.
+
+## Voice
+
+- Replies are spoken in Modern Standard Arabic by Piper.
