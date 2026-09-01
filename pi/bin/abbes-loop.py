@@ -23,7 +23,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import abbes_match
 import abbes_wake
 from abbes_announce import AnnounceListener, announce_url
-from abbes_camera import Camera, CameraPoller, frame_url
+from abbes_camera import Camera, CameraPoller, frame_url, usb_reset
 from abbes_satellite import SatelliteWake, wake_url
 from abbes_audio import RATE, MicGone, MicStream, rms_dbfs, write_tone
 from abbes_config import cfg, flag, listing
@@ -38,6 +38,11 @@ FAILURE_PHRASE = cfg("FAILURE_PHRASE", "لا أستطيع الإجابة الآ�
 ACK_PHRASE = cfg("ACK_PHRASE", "لحظة")
 PROMPT_PHRASE = cfg("PROMPT_PHRASE", "نعم؟")
 RECONNECT_PHRASE = cfg("RECONNECT_PHRASE", "عاد الاتصال")
+
+
+# Clear only while a turn is in flight, so the camera's USB reset -- which drops
+# the microphone for a second -- can wait for one to finish.
+IDLE = threading.Event()
 
 
 class Unreachable(Exception):
@@ -782,7 +787,12 @@ def start_announce_listener(stream):
 
 
 def start_camera_poller():
-    """Off unless CAMERA_ENABLED. Failing to see must never stop it hearing."""
+    """Off unless CAMERA_ENABLED. Failing to see must never stop it hearing.
+
+    That is not free advice: this camera is the same USB device as the
+    microphone, and a wedged camera has already cost the assistant its hearing
+    once. Hence the back-off and the reset.
+    """
     if not flag("CAMERA_ENABLED", False):
         return None
     url = cfg("ORCHESTRATOR_URL")
@@ -800,6 +810,10 @@ def start_camera_poller():
                height=cfg("CAMERA_HEIGHT", "480", int),
                log=log),
         interval=cfg("CAMERA_INTERVAL_SECS", "3", float),
+        wedge_interval=cfg("CAMERA_WEDGE_INTERVAL_SECS", "300", float),
+        repair=usb_reset(cfg("CAMERA_RESET_CMD", "~/bin/abbes-camera-reset.sh"), log=log)
+                if flag("CAMERA_SELF_REPAIR", True) else None,
+        idle=IDLE.is_set,
         log=log,
     )
     poller.start()
@@ -859,6 +873,7 @@ def main():
 
     while True:
         hit = None
+        IDLE.set()
         try:
             while not manual.is_set():
                 chunk = stream.read()
@@ -886,6 +901,7 @@ def main():
             log(f"FATAL: {e}")
             raise
 
+        IDLE.clear()
         preroll = stream.preroll()
         if hit and play_tone:
             # Async: the request is often already underway, so recording must

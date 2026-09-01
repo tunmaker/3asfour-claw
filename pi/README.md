@@ -67,6 +67,38 @@ twice a day: one set for the quiet hours left the assistant completely deaf in t
 afternoon, with 0 of 39 windows crossing it. The gate now tracks the floor — see
 `abbes_wake.Listener` and `abbes_wake_test.py`. Do not replace it with a constant.
 
+**The camera and the microphone are one USB device, and the camera can take the
+microphone down with it.** They are two functions of the same Sunplus webcam. Ask
+that device for a frame rate or for YUYV and it drops into EPROTO on every control
+transfer; from there `v4l2-ctl` returns `VIDIOC_STREAMON: Input/output error` and
+every grab yields a zero-length file. That much was known and is why `abbes_camera`
+uses one fixed MJPG invocation.
+
+What was not known is what it does to the audio. When the device wedged, `parecord`
+did **not** exit. It stayed alive and delivered nothing, for ninety minutes. Nothing
+in the journal, no trigger, no error — the loop sat in `read()` seeing an unusually
+quiet room, and the assistant was deaf while every service still reported `active`.
+`pw-record` from that source captured zero frames; after a USB reset the same source
+gave 5.9s of clean audio at −26.7 dBFS. So the two failures are one failure.
+
+Three things changed as a result, and none should be reverted casually:
+
+- **Silence is timed.** `MicStream` raises `MicGone` after `DEAD_SECS` (30s) with no
+  audio while unmuted, so systemd restarts the loop instead of leaving it deaf and
+  looking healthy. A mute does not count — see `abbes_audio_test.py`.
+- **A wedge backs off and repairs itself.** Polling a wedged device every three
+  seconds is a continuous stream of failing control transfers, and that is what keeps
+  the microphone starved. The poller now drops to `CAMERA_WEDGE_INTERVAL_SECS` (300s)
+  and runs `abbes-camera-reset.sh`, but only between turns, since the reset drops the
+  device for a moment. The old comment claiming a reset would cost the microphone had
+  it backwards: not resetting is what costs the microphone.
+- **The interval is 15s, not 3s.** Every grab reopens the device and the driver logs
+  `Error -5 querying master control (Focus, Automatic Continuous)`. At three seconds
+  that is over a thousand opens an hour. Presence does not need that granularity.
+
+If it ever goes quiet again, `journalctl --user-unit=abbes-loop` should now say so.
+Check `dmesg | tail` for `uvcvideo` EPROTO, and run `bin/abbes-camera-reset.sh`.
+
 ## Reaching the other two hosts
 
 Verified from this Pi: the chat endpoint and the embedding endpoint answer over the LAN,

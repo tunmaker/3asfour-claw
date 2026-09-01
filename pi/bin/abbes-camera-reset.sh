@@ -7,12 +7,16 @@
 #
 # A USB-level reset is enough on its own. Reloading uvcvideo is not, and cannot
 # be done while the loop is running anyway -- "modprobe: FATAL: Module uvcvideo
-# is in use" -- because the camera poller holds the device open. The reset is
-# also the gentler of the two: it leaves the microphone, which is a function of
-# this same USB device, to re-enumerate on its own.
+# is in use" -- because the camera poller holds the device open.
 #
-# The loop notices on its own and logs "camera: recovered". Nothing needs
-# restarting.
+# Run this for the microphone as much as for the camera. They are two functions
+# of the same USB device, and a wedged camera takes capture down with it without
+# killing parecord: the stream stays open and silent. Measured on a wedged
+# device, this source returned zero frames; after the reset, 5.9s at -26.7 dBFS.
+#
+# The loop calls this itself when it sees a wedge, between turns. Running it by
+# hand is still safe: the loop notices and logs "camera: recovered", and nothing
+# needs restarting.
 set -euo pipefail
 
 dev=$(lsusb | awk '/webcam/{printf "/dev/bus/usb/%s/%s", $2, substr($4,1,3)}')
