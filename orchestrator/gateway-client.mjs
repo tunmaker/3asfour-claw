@@ -155,10 +155,23 @@ export class GatewayClient extends EventEmitter {
     }
   }
 
+  /**
+   * Subscribe to session events for this connection.
+   *
+   * Since 2026.8.1 the parameters are `sessions.list`'s, and they only select an
+   * initial snapshot -- they do not filter which events arrive. Passing the old
+   * `{ sessionKey }` is now rejected outright:
+   *   "invalid sessions.subscribe params: unexpected property 'sessionKey'"
+   * So `{}` it is, which subscribes and asks for no snapshot.
+   *
+   * The subscription was never per-session anyway. An operator connection has
+   * always received events for every session, which is why every consumer here
+   * filters on runId; the key argument only ever looked like it narrowed things.
+   */
   async subscribe(sessionKey) {
-    if (this.subscribed.has(sessionKey)) return;
-    await this.call("sessions.subscribe", { sessionKey });
-    this.subscribed.add(sessionKey);
+    if (this.subscribed.has("*")) return;
+    await this.call("sessions.subscribe", {});
+    this.subscribed.add("*");
   }
 
   /**

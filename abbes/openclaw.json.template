@@ -35,42 +35,8 @@
       "thinkingDefault": "off",
       "reasoningDefault": "off",
       "userTimezone": "Europe/Paris",
-      "timeFormat": "24",
       "heartbeat": {
         "every": "0m"
-      },
-      "memorySearch": {
-        "enabled": true,
-        "provider": "openai-compatible",
-        "fallback": "none",
-        "model": "bge-m3",
-        "remote": {
-          "baseUrl": "http://LLAMA_SERVER_IP:8085/v1",
-          "apiKey": {
-            "source": "env",
-            "provider": "default",
-            "id": "LLAMACPP_API_KEY"
-          },
-          "nonBatchConcurrency": 2,
-          "batch": {
-            "enabled": false
-          }
-        },
-        "chunking": {
-          "tokens": 512,
-          "overlap": 64
-        },
-        "extraPaths": [
-          "/home/openclaw/.openclaw/workspace/notes",
-          "/home/openclaw/.openclaw/workspace/groceries"
-        ],
-        "query": {
-          "maxResults": 6,
-          "minScore": 0.25,
-          "hybrid": {
-            "enabled": true
-          }
-        }
       },
       "skills": [
         "notes",
@@ -82,7 +48,6 @@
         "fallbacks": []
       },
       "pdfMaxPages": 20,
-      "pdfMaxBytesMb": 10,
       "timeoutSeconds": 900
     }
   },
@@ -110,10 +75,8 @@
   },
   "cron": {
     "enabled": true,
-    "maxConcurrentRuns": 4,
     "triggers": {
-      "enabled": true,
-      "minIntervalMs": 30000
+      "enabled": true
     },
     "webhookToken": {
       "source": "env",
@@ -137,8 +100,7 @@
     ]
   },
   "meta": {
-    "lastTouchedVersion": "2026.7.1-2",
-    "lastTouchedAt": "2026-08-28T00:29:48.542Z"
+    "lastTouchedVersion": "2026.8.1"
   },
   "models": {
     "mode": "replace",
@@ -367,9 +329,6 @@
       "search": {
         "enabled": false
       },
-      "x_search": {
-        "enabled": false
-      },
       "fetch": {
         "enabled": false
       }
@@ -386,7 +345,6 @@
       "pathPrepend": [
         "/home/openclaw/bin"
       ],
-      "timeoutSec": 120,
       "safeBinTrustedDirs": [
         "/home/openclaw/bin"
       ],
@@ -435,5 +393,40 @@
   },
   "commands": {
     "bash": false
+  },
+  "memory": {
+    "search": {
+      "enabled": true,
+      "provider": "openai-compatible",
+      "fallback": "none",
+      "model": "bge-m3",
+      "remote": {
+        "baseUrl": "http://LLAMA_SERVER_IP:8085/v1",
+        "apiKey": {
+          "source": "env",
+          "provider": "default",
+          "id": "LLAMACPP_API_KEY"
+        },
+        "nonBatchConcurrency": 2,
+        "batch": {
+          "enabled": false
+        }
+      },
+      "chunking": {
+        "tokens": 512,
+        "overlap": 64
+      },
+      "extraPaths": [
+        "/home/openclaw/.openclaw/workspace/notes",
+        "/home/openclaw/.openclaw/workspace/groceries"
+      ],
+      "query": {
+        "maxResults": 6,
+        "minScore": 0.25,
+        "hybrid": {
+          "enabled": true
+        }
+      }
+    }
   }
 }

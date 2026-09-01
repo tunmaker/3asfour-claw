@@ -1,5 +1,5 @@
 [Unit]
-Description=OpenClaw Gateway (v2026.7.1-2)
+Description=OpenClaw Gateway
 After=network-online.target
 Wants=network-online.target
 StartLimitBurst=5
