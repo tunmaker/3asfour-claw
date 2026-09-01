@@ -1,0 +1,46 @@
+# Wake-word sidecar. Runs on the inference host, not the gateway host.
+#
+# Placeholders substituted at install time:
+#   __HOME__     → the inference user's home directory
+#
+# This lives in 3asfour-claw because the rules for what counts as the name are
+# the assistant's, and abbes_match.py is shared verbatim with the Pi so the two
+# ends cannot drift. It runs on the llama host because that is where the CPU and
+# the Vosk venv already are -- it adds no dependency to either machine.
+
+[Unit]
+Description=Abbes wake-word sidecar (Vosk small, CPU)
+After=network.target
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+WorkingDirectory=__HOME__/wake
+Environment=WAKE_HOST=0.0.0.0
+Environment=WAKE_PORT=9093
+Environment=ABBES_WAKE_DIR=__HOME__/wake
+Environment=WAKE_MODEL=__HOME__/models/vosk/vosk-model-small-ar-tn-0.1-linto
+Environment=WAKE_DECOYS_FILE=__HOME__/wake/wake-decoys.txt
+# Above the measured room floor, same value the Pi used when it did this itself.
+Environment=WAKE_GATE_DBFS=-20
+ExecStart=__HOME__/intel-gpu-inference/vosk-venv/bin/python __HOME__/wake/wake-sidecar.py
+Restart=always
+RestartSec=5
+
+# The model is 267 MB resident and one recogniser per connection is small. The
+# cap exists so a client that never disconnects cannot grow without bound.
+MemoryHigh=700M
+MemoryMax=1G
+
+# Kaldi will take every core it is given, and llama-server is the tenant that
+# matters on this box. Wake decoding is roughly real time on one core.
+CPUQuota=150%
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__HOME__/wake
+
+[Install]
+WantedBy=default.target

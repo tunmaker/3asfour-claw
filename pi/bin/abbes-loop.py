@@ -20,9 +20,11 @@ import wave
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+import abbes_match
 import abbes_wake
 from abbes_announce import AnnounceListener, announce_url
 from abbes_camera import Camera, CameraPoller, frame_url
+from abbes_satellite import SatelliteWake, wake_url
 from abbes_audio import RATE, MicGone, MicStream, rms_dbfs, write_tone
 from abbes_config import cfg, flag, listing
 from abbes_stream import PlaybackStream, stream_turn
@@ -767,7 +769,20 @@ def main():
     stream = MicStream(cfg("MIC_SOURCE"), cfg("WAKE_PREROLL_SECS", "1.2", float))
 
     listener = None
-    if flag("WAKE_ENABLED", True):
+    satellite = None
+    if flag("SATELLITE_WAKE", False):
+        # The 267 MB acoustic model stays on the server. This end keeps the
+        # energy gate, which is arithmetic, and streams what it hears.
+        url = cfg("WAKE_SIDECAR_URL")
+        if url:
+            satellite = SatelliteWake(wake_url(url), log=log).start()
+            MATCHER = abbes_match.Matcher(listing("WAKE_CANDIDATES") or
+                                          abbes_match.DEFAULT_CANDIDATES,
+                                          cfg("WAKE_FUZZ", "1", int))
+            log(f"wake word is remote: {wake_url(url)}")
+        else:
+            log("WARNING: SATELLITE_WAKE set but WAKE_SIDECAR_URL is not; falling back")
+    if satellite is None and flag("WAKE_ENABLED", True):
         try:
             started = time.monotonic()
             listener = abbes_wake.build(cfg, listing)
@@ -803,9 +818,15 @@ def main():
         try:
             while not manual.is_set():
                 chunk = stream.read()
-                if chunk is None or listener is None:
+                if chunk is None:
                     continue
-                hit = listener.feed(chunk)
+                if satellite is not None:
+                    satellite.feed(chunk)
+                    hit = satellite.heard_name()
+                elif listener is not None:
+                    hit = listener.feed(chunk)
+                else:
+                    continue
                 if hit:
                     break
             if manual.is_set():
