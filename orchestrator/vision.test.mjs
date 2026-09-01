@@ -40,11 +40,13 @@ ok(captionSimilarity("In this image there is a screen.",
                      "In this picture there is a screen.") === 1,
    "filler words are ignored, so this and picture do not count as a change");
 
-// The gate, with a stubbed captioner so no model is involved.
-async function gateWith(captions, opts = {}) {
+// The gate, with the model stubbed out. `presence` is the sequence of yes/no
+// answers the presence question would give; the caption is incidental now.
+async function gateWith(presence, opts = {}) {
   let i = 0;
   const g = new VisionGate({ captionUrl: "http://unused", minCaptionIntervalMs: 0, ...opts });
-  g.caption = async () => captions[Math.min(i++, captions.length - 1)];
+  g.personVisible = async () => presence[Math.min(i++, presence.length - 1)];
+  g.caption = async () => "a room";
   return g;
 }
 
@@ -55,31 +57,60 @@ const BIG = Buffer.alloc(12000);
 const BIGGER = Buffer.alloc(16000);
 
 {
-  const g = await gateWith(["a person at a desk"]);
-  ok((await g.offer(SMALL)) !== null, "first frame always looks like a change");
-  ok((await g.offer(SMALL)) === null, "an identically sized frame is not a change");
-  ok(g.stats.captioned === 1, "the unchanged frame never reached the captioner");
+  // The first observation is a baseline, not an event. Reporting it would make
+  // every restart of the orchestrator announce an arrival into an unchanged room.
+  const g = await gateWith([true, true], { confirmations: 1 });
+  ok((await g.offer(SMALL)) === null, "the first look sets the baseline silently");
+  ok(g.personPresent === true, "but the state is recorded");
+  ok((await g.offer(SMALL)) === null, "an identically sized frame is not looked at");
+  ok(g.stats.captioned === 1, "so the model was asked exactly once");
 }
 
 {
-  const g = await gateWith(["a person at a desk", "a person at a desk", "an empty room"]);
+  // One dissenting frame is not a departure. Measured: the model said no about
+  // someone who had leaned out of shot, and the gate reported them leaving and
+  // arriving again 15 seconds later.
+  const g = await gateWith([true, true, false, true, true], { confirmations: 2 });
+  await g.offer(SMALL); await g.offer(BIG);          // baseline: present
+  ok(g.personPresent === true, "baseline is present");
+  ok((await g.offer(BIGGER)) === null, "a single 'no' does not flip the state");
+  ok(g.personPresent === true, "still present after one dissent");
+  ok((await g.offer(SMALL)) === null, "and back to yes is a non-event");
+  ok(g.stats.changes === 0, "the flicker produced no events at all");
+}
+
+{
+  const g = await gateWith([true, true, false, false], { confirmations: 2 });
+  await g.offer(SMALL); await g.offer(BIG);
+  await g.offer(BIGGER);
+  const left = await g.offer(SMALL);
+  ok(left !== null && left.present === false, "two agreeing frames do flip it");
+  ok(left.was === true, "and it carries what it was before");
+}
+
+{
+  // The failure this replaced: SmolVLM rewords the same room every time, and
+  // 25 of 25 consecutive real captions scored under the old 0.70 threshold. A
+  // yes/no answer does not drift.
+  const g = await gateWith([true, true, true, true, false, false], { confirmations: 2 });
   await g.offer(SMALL);
-  const second = await g.offer(BIG);
-  ok(second === null, "a changed frame whose caption says the same thing is not a change");
-  ok(g.stats.captioned === 2, "but it did cost a caption to find that out");
-  const third = await g.offer(BIGGER);
-  ok(third !== null && third.caption === "an empty room", "a different caption is a change");
-  ok(third.previous === "a person at a desk", "the change carries what it replaced");
+  ok((await g.offer(BIG)) === null, "still there: a changed frame is not an event");
+  ok((await g.offer(BIGGER)) === null, "still there again");
+  await g.offer(SMALL);
+  await g.offer(BIG);
+  const left = await g.offer(BIGGER);
+  ok(left !== null && left.present === false, "the room emptying is an event");
+  ok(g.stats.changes === 1, "one event, not one per rewording");
 }
 
 {
-  const g = await gateWith(["anything"], { isBusy: () => true });
+  const g = await gateWith([true], { isBusy: () => true });
   ok((await g.offer(SMALL)) === null, "a live turn suppresses captioning");
   ok(g.stats.captioned === 0 && g.stats.skippedBusy === 1, "and it is counted, not silently dropped");
 }
 
 {
-  const g = await gateWith([""], { minCaptionIntervalMs: 60000 });
+  const g = await gateWith([true], { minCaptionIntervalMs: 60000 });
   await g.offer(SMALL);
   const blocked = await g.offer(BIG);
   ok(blocked === null, "the minimum interval holds the captioner off");
@@ -88,16 +119,15 @@ const BIGGER = Buffer.alloc(16000);
 
 {
   const g = new VisionGate({ captionUrl: "http://unused", minCaptionIntervalMs: 0 });
-  g.caption = async () => { throw new Error("model down"); };
-  ok((await g.offer(Buffer.alloc(8192))) === null, "a captioner failure is not a change");
+  g.personVisible = async () => { throw new Error("model down"); };
+  ok((await g.offer(Buffer.alloc(8192))) === null, "a model failure is not a change");
   ok(g.stats.errors === 1, "and it is counted");
 }
 
 {
   // Size can hold steady across a real change, so the gate must look anyway
   // once it has been quiet too long.
-  const g = await gateWith(["a room", "a room with a person in it"],
-                           { maxCaptionIntervalMs: 10 });
+  const g = await gateWith([false, true, true], { maxCaptionIntervalMs: 10, confirmations: 1 });
   await g.offer(Buffer.alloc(8192));
   await new Promise((r) => setTimeout(r, 20));
   const same = Buffer.alloc(8192);
@@ -107,7 +137,7 @@ const BIGGER = Buffer.alloc(16000);
 }
 
 {
-  const g = await gateWith(["x"], { maxCaptionIntervalMs: 3600000 });
+  const g = await gateWith([true], { maxCaptionIntervalMs: 3600000, confirmations: 1 });
   await g.offer(Buffer.alloc(8192));
   const before = g.stats.captioned;
   await g.offer(Buffer.alloc(8192));

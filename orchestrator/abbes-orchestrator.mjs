@@ -312,12 +312,13 @@ function announce(text, { source = "unknown" } = {}) {
  * session, never the voice session, and whatever comes back reaches the room
  * only through the same announce lane as everything else, with the same veto.
  */
-async function onSceneChange({ caption, previous }) {
+async function onSceneChange({ present, caption }) {
   const token = readHookToken();
   if (!token) { log("vision: scene changed but no hook token; not escalating"); return; }
   const body = {
     message:
-      `[vision] The room changed.\nPrevious: ${previous || "unknown"}\nNow: ${caption}\n` +
+      `[vision] ${present ? "Someone has come into the room." : "The room is now empty."}\n` +
+      `What the camera sees: ${caption || "no description available"}\n` +
       `If this is worth telling the household right now, reply with one short ` +
       `sentence in Modern Standard Arabic and nothing else. If it is not, reply exactly NO_REPLY.`,
     sessionKey: "autonomy",

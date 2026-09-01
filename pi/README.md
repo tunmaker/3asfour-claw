@@ -248,7 +248,17 @@ The tally file holds timestamps and nothing else, for the same reason.
 
 Loop output goes to the system journal, not the user journal:
 
-    sudo journalctl -f | grep '^\['
+    journalctl --user-unit=abbes-loop -f
+
+`--user-unit=` and `--user -u` are not the same thing, and the difference bites here.
+`--user` restricts the search to a per-user journal namespace, which this Pi does not
+have — journald is volatile and does not split files per UID — so `journalctl --user -u
+abbes-loop` answers **"No journal files were found"** even while `systemctl --user status`
+is printing those very lines. `--user-unit=` reads the system journal and filters by unit,
+which is what is wanted. No sudo, and no grepping every service on the box.
+
+The same is not true of the gateway and inference hosts, where `--user -u` works. This is
+a property of this Pi's journald, not of user units in general.
 
 ### Not hearing yourself
 

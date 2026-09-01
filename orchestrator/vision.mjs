@@ -1,8 +1,8 @@
 // The vision gate: three tiers, cheapest first.
 //
 //   1. frame difference   free, every frame. Below threshold, stop here.
-//   2. SmolVLM caption    0.36 s of GPU. Only on change. If the caption says the
-//                         same thing as last time, stop here.
+//   2. presence question  0.36 s of GPU. Only on change. Fires only when the
+//                         yes/no answer FLIPS, not when the wording moves.
 //   3. Qwen + mmproj      on demand only, and never during a turn.
 //
 // Tier 1 alone is not presence detection. It compares compressed size, so it
@@ -58,7 +58,16 @@ function contentWords(text) {
   );
 }
 
-/** 0 = nothing in common, 1 = identical content words. */
+/**
+ * 0 = nothing in common, 1 = identical content words.
+ *
+ * Kept for the record and for the tests, but no longer what decides a change.
+ * Measured over 26 consecutive captions of one static room, consecutive pairs
+ * scored min 0.00, median 0.40, max 0.67 -- so at the old 0.70 threshold every
+ * single pair counted as a change, 25 out of 25. A free-form caption is a good
+ * description and a terrible detector: SmolVLM says "a person sitting on the
+ * chair" and then "a man sitting on the chair" about the same unmoved person.
+ */
 export function captionSimilarity(a, b) {
   const sa = contentWords(a), sb = contentWords(b);
   if (sa.size === 0 && sb.size === 0) return 1;
@@ -76,6 +85,9 @@ export class VisionGate {
     captionSimilarThreshold = +(process.env.VISION_CAPTION_SIMILARITY || 0.7),
     minCaptionIntervalMs = +(process.env.VISION_MIN_CAPTION_MS || 5000),
     maxCaptionIntervalMs = +(process.env.VISION_MAX_CAPTION_MS || 60000),
+    // How many consecutive identical answers before the state flips. One frame
+    // where a person is half out of shot should not read as them leaving.
+    confirmations = +(process.env.VISION_CONFIRMATIONS || 2),
     timeoutMs = +(process.env.VISION_TIMEOUT_MS || 20000),
     isBusy = () => false,
   } = {}) {
@@ -85,17 +97,24 @@ export class VisionGate {
     this.captionSimilarThreshold = captionSimilarThreshold;
     this.minCaptionIntervalMs = minCaptionIntervalMs;
     this.maxCaptionIntervalMs = maxCaptionIntervalMs;
+    this.confirmations = Math.max(1, confirmations);
     this.timeoutMs = timeoutMs;
     this.isBusy = isBusy;
 
     this.lastFrame = null;
     this.lastCaption = null;
     this.lastCaptionAt = 0;
+    // null until the first look, so the first answer is not reported as an
+    // arrival or a departure.
+    this.personPresent = null;
+    this.pending = null;
+    this.pendingCount = 0;
     this.stats = { frames: 0, diffTripped: 0, overdue: 0, captioned: 0, changes: 0, skippedBusy: 0, errors: 0 };
   }
 
   snapshot() {
     return {
+      personPresent: this.personPresent,
       caption: this.lastCaption,
       capturedAt: this.lastCaptionAt || null,
       ...this.stats,
@@ -123,26 +142,49 @@ export class VisionGate {
     if (this.isBusy()) { this.stats.skippedBusy++; return null; }
     if (Date.now() - this.lastCaptionAt < this.minCaptionIntervalMs) return null;
 
-    let caption;
+    // Ask the closed question, not the open one. "Is a person visible" has a
+    // stable answer; "describe this image" has a different answer every time.
+    let present;
     try {
-      caption = await this.caption(jpeg, CAPTION_PROMPT);
+      present = await this.personVisible(jpeg);
     } catch (e) {
       this.stats.errors++;
-      this.log(`vision: caption failed (${e.message})`);
+      this.log(`vision: presence check failed (${e.message})`);
       return null;
     }
     this.stats.captioned++;
     this.lastCaptionAt = Date.now();
 
-    const previous = this.lastCaption;
-    const similarity = captionSimilarity(caption, previous);
-    this.lastCaption = caption;
+    const was = this.personPresent;
 
-    if (previous && similarity >= this.captionSimilarThreshold) return null;
+    // Debounce. The model answers one frame at a time and will occasionally say
+    // no about someone who leaned out of shot, which read as them leaving and
+    // then arriving 15 seconds later.
+    if (present === this.pending) this.pendingCount++;
+    else { this.pending = present; this.pendingCount = 1; }
+    if (present === was || this.pendingCount < this.confirmations) return null;
+    this.personPresent = present;
+
+    // The first observation establishes the baseline rather than announcing it.
+    // Otherwise every restart of this process reports an arrival or a departure
+    // for a room that has not changed at all.
+    if (was === null) {
+      this.log(`vision: baseline set, ${present ? "someone is here" : "room is empty"}`);
+      return null;
+    }
+
+    // Only now is a description worth the tokens, and only because whatever
+    // acts on this event needs to know what it is looking at.
+    let caption = null;
+    try {
+      caption = await this.caption(jpeg, CAPTION_PROMPT);
+      this.lastCaption = caption;
+    } catch { /* the transition is the event; the words are a nicety */ }
 
     this.stats.changes++;
-    this.log(`vision: scene changed (diff ${score.toFixed(3)}, similarity ${similarity.toFixed(2)}): ${caption}`);
-    return { caption, previous, score, similarity };
+    const what = present ? "someone arrived" : "the room is empty";
+    this.log(`vision: ${what} (diff ${score.toFixed(3)})`);
+    return { present, was, caption, previous: this.lastCaption, score };
   }
 
   /** One question about one frame. Also the tier-3 entry point. */
