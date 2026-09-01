@@ -144,11 +144,11 @@ path.
   the configuration uses replace semantics so unconfigured providers cannot appear.
 - Web search and browser tools are denied for the agent.
 - One chat channel: WhatsApp, via the external `@openclaw/whatsapp` plugin
-  (Baileys, QR-linked to a dedicated number). DMs are pairing-gated -- an unknown
-  sender gets a code and is ignored until approved with `openclaw pairing approve
-  whatsapp <CODE>` or Settings -> Channels -> DM access requests. Groups are
-  allowlist-only and the allowlist is empty. Keep the plugin version matched to
-  the runtime: the plugin's peer range is enforced at install time.
+  (Baileys, QR-linked to the household's personal number in self-chat mode:
+  Abbes answers in the "message yourself" chat). DMs are allowlist-only, keyed
+  off the linked number; the number lives in the host config, never here.
+  Groups are allowlist-only and the allowlist is empty. Keep the plugin version
+  matched to the runtime: the plugin's peer range is enforced at install time.
 - Exec is unrestricted (`mode: "full"`). See section 4 for why, and for what
   carries the containment instead.
 - The gateway binds loopback and is reached over SSH.

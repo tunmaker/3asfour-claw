@@ -418,7 +418,8 @@
   },
   "channels": {
     "whatsapp": {
-      "dmPolicy": "pairing",
+      "dmPolicy": "allowlist",
+      "selfChatMode": true,
       "groupPolicy": "allowlist"
     }
   }
