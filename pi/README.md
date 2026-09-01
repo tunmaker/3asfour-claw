@@ -96,8 +96,15 @@ Three things changed as a result, and none should be reverted casually:
   `Error -5 querying master control (Focus, Automatic Continuous)`. At three seconds
   that is over a thousand opens an hour. Presence does not need that granularity.
 
-If it ever goes quiet again, `journalctl --user-unit=abbes-loop` should now say so.
-Check `dmesg | tail` for `uvcvideo` EPROTO, and run `bin/abbes-camera-reset.sh`.
+If it ever goes quiet again, `journalctl --user-unit=abbes-loop` says so and the
+loop resets the bus itself on the way down — MicGone runs
+`abbes-camera-reset.sh`, rate-limited to one attempt per `MIC_RESET_MIN_SECS`
+(600) via a marker in `XDG_RUNTIME_DIR`, so an actually-unplugged microphone
+does not get the bus reset every 35 seconds. That limit exists because the
+detection alone once produced a 363-restart crash loop: the device wedged while
+the camera was healthy, the poller's reset never fired, and every fresh
+parecord was as deaf as the last. If the loop is restarting and the repair line
+says it is waiting, the device needs unplugging, not another reset.
 
 ## Reaching the other two hosts
 

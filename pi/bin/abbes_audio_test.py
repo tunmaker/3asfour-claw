@@ -5,7 +5,7 @@ import sys
 import threading
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from abbes_audio import CHUNK_BYTES, MicGone, MicStream
+from abbes_audio import CHUNK_BYTES, MicGone, MicStream, attempt_mic_repair
 
 FAILS = []
 
@@ -110,6 +110,42 @@ try:
     check("a dead process still raises", False)
 except MicGone as e:
     check("a dead process still raises", "exited" in str(e))
+
+# The repair on the way down: reset once, then hold off, then allow again.
+import tempfile
+tmp = tempfile.mkdtemp()
+script = pathlib.Path(tmp) / "reset.sh"
+script.write_text("#!/bin/sh\necho reset ran\n")
+calls = []
+t = {"now": 5000.0}
+env = {"MIC_RESET_CMD": str(script), "MIC_RESET_MIN_SECS": "600", "XDG_RUNTIME_DIR": tmp}
+quiet = lambda *a: None
+
+def fake_run(s):
+    calls.append(str(s))
+    return "camera back: 1234 byte frame"
+
+check("first MicGone runs the reset",
+      attempt_mic_repair(env, run=fake_run, log=quiet, clock=lambda: t["now"]) and len(calls) == 1)
+t["now"] += 35
+check("35s later it holds off",
+      not attempt_mic_repair(env, run=fake_run, log=quiet, clock=lambda: t["now"]) and len(calls) == 1)
+t["now"] += 700
+import os
+os.utime(pathlib.Path(tmp) / "abbes-mic-reset", (t["now"] - 700, t["now"] - 700))
+check("past the window it resets again",
+      attempt_mic_repair(env, run=fake_run, log=quiet, clock=lambda: t["now"]) and len(calls) == 2)
+check("a missing script is a no, not a crash",
+      not attempt_mic_repair({"MIC_RESET_CMD": tmp + "/absent.sh", "XDG_RUNTIME_DIR": tmp}, log=quiet))
+
+def broken_run(s):
+    raise OSError("sudo says no")
+
+os.utime(pathlib.Path(tmp) / "abbes-mic-reset", (0, 0))
+check("a failing reset returns False but still counts as an attempt",
+      not attempt_mic_repair(env, run=broken_run, log=quiet, clock=lambda: t["now"]))
+check("and the failure is rate-limited too",
+      not attempt_mic_repair(env, run=fake_run, log=quiet, clock=lambda: t["now"] + 30) and len(calls) == 2)
 
 print(f"\n{'FAILED: ' + ', '.join(FAILS) if FAILS else 'all checks passed'}")
 sys.exit(1 if FAILS else 0)

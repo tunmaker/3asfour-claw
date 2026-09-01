@@ -10,11 +10,20 @@ loop sat in read() seeing an unusually quiet room, logged not one line, and
 answered no one. So silence is timed. Past DEAD_SECS with the stream unmuted,
 the mic is gone rather than quiet, and saying so lets systemd restart the loop
 instead of leaving it deaf and looking healthy.
+
+Restarting alone is not a repair, and one night proved it: the device wedged
+while the camera was healthy, so the poller's reset never fired, and the loop
+crash-restarted 363 times in a row -- MicGone at 30s, restart at 5s, forever.
+A fresh parecord on a wedged bus is just as deaf as the old one. So the MicGone
+exit path may run the USB reset itself, rate-limited through a marker file so a
+genuinely unplugged microphone does not get the bus reset every 35 seconds.
 """
 
 import array
 import collections
 import math
+import os
+import pathlib
 import subprocess
 import threading
 import time
@@ -31,6 +40,39 @@ DEAD_SECS = 30.0
 
 class MicGone(Exception):
     pass
+
+
+def attempt_mic_repair(env=os.environ, run=None, log=print, clock=time.time):
+    """One rate-limited USB reset on the way down. True if a reset was run."""
+    script = pathlib.Path(env.get("MIC_RESET_CMD", os.path.expanduser("~/bin/abbes-camera-reset.sh")))
+    if not script.is_file():
+        log(f"mic repair: no reset script at {script}")
+        return False
+    min_secs = int(env.get("MIC_RESET_MIN_SECS", "600"))
+    marker = pathlib.Path(env.get("XDG_RUNTIME_DIR", "/tmp")) / "abbes-mic-reset"
+    try:
+        age = clock() - marker.stat().st_mtime
+        if age < min_secs:
+            log(f"mic repair: last reset {age:.0f}s ago, waiting out {min_secs}s")
+            return False
+    except OSError:
+        pass
+    marker.touch()
+    log(f"mic repair: running {script}")
+    try:
+        r = (run or _run_reset)(script)
+    except Exception as e:
+        log(f"mic repair: reset failed ({e})")
+        return False
+    for line in r.splitlines():
+        if line.strip():
+            log(f"mic repair: {line.strip()}")
+    return True
+
+
+def _run_reset(script):
+    r = subprocess.run([str(script)], capture_output=True, text=True, timeout=60)
+    return r.stdout + r.stderr
 
 
 def rms_dbfs(buf):

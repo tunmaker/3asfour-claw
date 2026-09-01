@@ -25,7 +25,7 @@ import abbes_wake
 from abbes_announce import AnnounceListener, announce_url
 from abbes_camera import Camera, CameraPoller, frame_url, usb_reset
 from abbes_satellite import SatelliteWake, wake_url
-from abbes_audio import RATE, MicGone, MicStream, rms_dbfs, write_tone
+from abbes_audio import RATE, MicGone, MicStream, attempt_mic_repair, rms_dbfs, write_tone
 from abbes_config import cfg, flag, listing
 from abbes_stream import PlaybackStream, stream_turn
 
@@ -923,4 +923,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except MicGone as e:
+        # systemd restarts the loop, but a fresh parecord on a wedged USB bus is
+        # exactly as deaf as the old one. Reset on the way out, so the next start
+        # finds a working device instead of crash-looping every 35 seconds.
+        attempt_mic_repair(log=log)
+        sys.exit(1)
