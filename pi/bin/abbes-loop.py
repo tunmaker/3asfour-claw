@@ -22,6 +22,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import abbes_wake
 from abbes_announce import AnnounceListener, announce_url
+from abbes_camera import Camera, CameraPoller, frame_url
 from abbes_audio import RATE, MicGone, MicStream, rms_dbfs, write_tone
 from abbes_config import cfg, flag, listing
 from abbes_stream import PlaybackStream, stream_turn
@@ -734,6 +735,31 @@ def start_announce_listener(stream):
     return listener
 
 
+def start_camera_poller():
+    """Off unless CAMERA_ENABLED. Failing to see must never stop it hearing."""
+    if not flag("CAMERA_ENABLED", False):
+        return None
+    url = cfg("ORCHESTRATOR_URL")
+    if not url:
+        log("camera: no ORCHESTRATOR_URL, eyes off")
+        return None
+    device = cfg("CAMERA_DEVICE", "/dev/video0")
+    if not pathlib.Path(device).exists():
+        log(f"camera: {device} is not present, eyes off")
+        return None
+    poller = CameraPoller(
+        frame_url(url),
+        Camera(device=device,
+               width=cfg("CAMERA_WIDTH", "640", int),
+               height=cfg("CAMERA_HEIGHT", "480", int),
+               log=log),
+        interval=cfg("CAMERA_INTERVAL_SECS", "3", float),
+        log=log,
+    )
+    poller.start()
+    return poller
+
+
 def main():
     global MATCHER
     ensure_vosk()
@@ -769,6 +795,7 @@ def main():
     tally = cfg("WAKE_TALLY") if flag("WAKE_TALLY_ENABLED") else None
     play_tone = flag("WAKE_TONE", True)
     start_announce_listener(stream)
+    start_camera_poller()
     log(f"idle. say the name{'' if listener else ' (wake word off)'}, or: echo go > {fifo}")
 
     while True:

@@ -19,9 +19,11 @@
 // live in one place instead of in every caller.
 
 import http from "node:http";
+import { readFileSync } from "node:fs";
 import { GatewayClient } from "./gateway-client.mjs";
 import { Chunker } from "./sentences.mjs";
 import { QuietHours } from "./quiet.mjs";
+import { VisionGate } from "./vision.mjs";
 
 const PORT        = +(process.env.ABBES_ORCH_PORT || 18790);
 const GW_URL      = process.env.GW_URL      || "ws://127.0.0.1:18789";
@@ -39,6 +41,13 @@ function required(name) {
 }
 
 const ANNOUNCE_WAIT = +(process.env.ANNOUNCE_WAIT_MS || 45000);
+const CAPTION_URL   = process.env.CAPTION_URL || "";
+// Off by default. The gate can watch and describe the room from the moment it is
+// deployed; deciding to say something unprompted about what it saw is a separate
+// judgement, and one that should be switched on deliberately rather than
+// arriving with a deploy.
+const VISION_TRIGGER = process.env.VISION_TRIGGER_ENABLED === "1";
+const GW_HTTP       = process.env.GW_HTTP || GW_URL.replace(/^ws/, "http");
 
 const log = (...a) => console.log(`[${new Date().toISOString().slice(11, 23)}]`, ...a);
 
@@ -219,6 +228,12 @@ function whenIdle(timeoutMs) {
   });
 }
 
+// Captioning costs GPU that a voice turn is also using, so the gate is told to
+// stand down while one is in flight rather than racing it.
+const vision = CAPTION_URL
+  ? new VisionGate({ captionUrl: CAPTION_URL, log, isBusy: () => turnsInFlight > 0 })
+  : null;
+
 // One announcement at a time, in order. Two overlapping ones would interleave
 // their sentences on the same playback stream and be unintelligible.
 let announceQueue = Promise.resolve();
@@ -268,6 +283,55 @@ function announce(text, { source = "unknown" } = {}) {
   return job;
 }
 
+/**
+ * What a changed scene does.
+ *
+ * Not announced directly. Unlike a prayer time, "the room changed" carries no
+ * sentence with it -- whether it is worth saying anything is a judgement, and
+ * that is the one job worth spending a model turn on. It goes to the autonomy
+ * session, never the voice session, and whatever comes back reaches the room
+ * only through the same announce lane as everything else, with the same veto.
+ */
+async function onSceneChange({ caption, previous }) {
+  const token = readHookToken();
+  if (!token) { log("vision: scene changed but no hook token; not escalating"); return; }
+  const body = {
+    message:
+      `[vision] The room changed.\nPrevious: ${previous || "unknown"}\nNow: ${caption}\n` +
+      `If this is worth telling the household right now, reply with one short ` +
+      `sentence in Modern Standard Arabic and nothing else. If it is not, reply exactly NO_REPLY.`,
+    sessionKey: "autonomy",
+    name: "vision",
+    model: "llamacpp/qwen3.5-9b-q8-auto",
+    deliver: false,
+  };
+  try {
+    const res = await fetch(`${GW_HTTP}/hooks/agent`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(120000),
+    });
+    if (!res.ok) { log(`vision: hook returned ${res.status}`); return; }
+    const out = await res.json().catch(() => ({}));
+    const said = String(out.reply ?? out.text ?? out.result?.reply ?? "").trim();
+    if (!said || /NO_REPLY/i.test(said)) { log("vision: model chose to stay quiet"); return; }
+    await announce(said, { source: "vision" });
+  } catch (e) {
+    log(`vision: escalation failed (${e.message})`);
+  }
+}
+
+function readHookToken() {
+  try {
+    for (const line of readFileSync(ENV_FILE, "utf8").split("\n")) {
+      const m = line.match(/^\s*OPENCLAW_HOOK_TOKEN\s*=\s*(.*)$/);
+      if (m) return m[1].trim().replace(/^["']|["']$/g, "");
+    }
+  } catch { /* nothing to read: escalation is simply unavailable */ }
+  return null;
+}
+
 // Cron's webhook delivery and a hand-rolled curl do not agree on where the text
 // lives, so accept the shapes we actually see and say so when we cannot find it.
 function announceText(body) {
@@ -312,6 +376,7 @@ const server = http.createServer(async (req, res) => {
       quietHours: win ? win.spec : null,
       quietNow: quiet.blocks(),
       quietExempt: [...quiet.exempt()],
+      vision: vision ? { trigger: VISION_TRIGGER, ...vision.snapshot() } : null,
     }));
     return;
   }
@@ -333,6 +398,26 @@ const server = http.createServer(async (req, res) => {
     req.on("close", drop);
     req.on("error", drop);
     res.on("error", drop);
+    return;
+  }
+
+  // One frame from the Pi's camera poll. Answers immediately with what the gate
+  // decided, so the Pi can log it without holding any state of its own.
+  if (req.method === "POST" && url.pathname === "/vision/frame") {
+    if (!vision) { res.writeHead(503, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "CAPTION_URL not set" })); return; }
+    let jpeg;
+    try { jpeg = await readBody(req, 4 * 1024 * 1024); }
+    catch (e) { res.writeHead(413).end(e.message); return; }
+    const changed = await vision.offer(jpeg);
+    if (changed && VISION_TRIGGER) await onSceneChange(changed);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ changed: Boolean(changed), ...(changed || {}) }));
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/vision/state") {
+    res.writeHead(vision ? 200 : 503, { "content-type": "application/json" });
+    res.end(JSON.stringify(vision ? vision.snapshot() : { error: "CAPTION_URL not set" }));
     return;
   }
 
