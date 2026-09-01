@@ -78,7 +78,11 @@ def record_until_silence(stream, path, start_window, preroll=b""):
     threshold = threshold_for("VAD_THRESHOLD_DBFS", "-28", cfg("VAD_ABOVE_FLOOR_DB", "6", float))
     max_secs = cfg("VAD_MAX_SECS", "15", float)
     min_secs = cfg("VAD_MIN_SECS", "1.0", float)
-    min_speech = cfg("VAD_MIN_SPEECH_SECS", "0.5", float)
+    # 0.5s was long enough to miss "نعم". The follow-up window exists precisely
+    # for one-word answers, and a yes is about 0.3s: the level reached -15 dBFS,
+    # far above threshold, and still failed to arm because it did not last.
+    # A door or a click is under 100ms, so 0.3 still discriminates.
+    min_speech = cfg("VAD_MIN_SPEECH_SECS", "0.3", float)
 
     frames = bytearray(preroll)
     levels = []

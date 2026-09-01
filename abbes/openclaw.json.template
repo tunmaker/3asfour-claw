@@ -8,13 +8,28 @@
       },
       "models": {
         "llamacpp/qwen3.5-9b-q8": {
-          "alias": "qwen"
+          "alias": "qwen",
+          "params": {
+            "extra_body": {
+              "id_slot": 0
+            }
+          }
         },
         "llamacpp/qwen3.5-9b-q8-auto": {
-          "alias": "qwen-auto"
+          "alias": "qwen-auto",
+          "params": {
+            "extra_body": {
+              "id_slot": 1
+            }
+          }
         },
         "llamacpp/qwen3.5-9b-q8-vision": {
-          "alias": "qwen-vision"
+          "alias": "qwen-vision",
+          "params": {
+            "extra_body": {
+              "id_slot": 2
+            }
+          }
         }
       },
       "thinkingDefault": "off",
@@ -158,8 +173,7 @@
             "params": {
               "chat_template_kwargs": {
                 "enable_thinking": false
-              },
-              "id_slot": 0
+              }
             }
           },
           {
@@ -182,8 +196,7 @@
             "params": {
               "chat_template_kwargs": {
                 "enable_thinking": false
-              },
-              "id_slot": 1
+              }
             }
           },
           {
@@ -206,8 +219,7 @@
             "params": {
               "chat_template_kwargs": {
                 "enable_thinking": false
-              },
-              "id_slot": 2
+              }
             }
           }
         ]
