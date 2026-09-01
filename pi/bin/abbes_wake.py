@@ -13,6 +13,7 @@ roughly real time on this hardware, so it cannot be left running on silence.
 Standalone:  abbes_wake.py --listen [--tally FILE]
 """
 
+import collections
 import json
 import pathlib
 import re
@@ -69,7 +70,7 @@ class Detector:
 
 
 class Listener:
-    """Energy-gated wake detection.
+    """Energy-gated wake detection, with the gate tracking the room.
 
     The decoder costs about one second of CPU per second of audio on this Pi,
     so it is only fed while the room is above the noise floor. Quiet rooms cost
@@ -80,11 +81,29 @@ class Listener:
     "عباس" is normal speech, and resetting there would throw away the first
     half of the name. State is only discarded once the room has been quiet long
     enough that whatever was being said is over.
+
+    The threshold adapts, because a fixed one is wrong twice a day. Measured in
+    this room, same microphone, same gain:
+
+        3am ... floor -24.8 dBFS median, -21.7 max
+        4pm ... floor -36.3 dBFS median, -26.9 max
+
+    A threshold set against the first is 12 dB above the second and the
+    assistant goes completely deaf: 0 of 39 windows crossed it, so the decoder
+    was never fed and the name could not be heard however loudly it was said.
+    Set against the second it never closes at night. So it is kept a fixed
+    margin above a running estimate of the floor rather than at a fixed number.
+
+    Erring low is the cheap direction. Too low costs CPU decoding room noise;
+    too high costs everything. False wakes are the decoys' job, not the gate's.
     """
 
-    def __init__(self, detector, threshold_dbfs=-30.0, hangover_secs=0.8, idle_reset_secs=2.0):
+    def __init__(self, detector, threshold_dbfs=-30.0, hangover_secs=0.8, idle_reset_secs=2.0,
+                 adapt=True, margin_db=8.0, window_secs=30.0, floor_percentile=0.25,
+                 min_threshold=-48.0, max_threshold=-18.0):
         self.detector = detector
         self.threshold = threshold_dbfs
+        self.configured_threshold = threshold_dbfs
         self.hangover_chunks = max(1, int(hangover_secs * 1000 / CHUNK_MS))
         self.idle_reset_chunks = max(self.hangover_chunks + 1, int(idle_reset_secs * 1000 / CHUNK_MS))
         self._quiet = 0
@@ -92,9 +111,45 @@ class Listener:
         self.decoded_chunks = 0
         self.total_chunks = 0
 
+        self.adapt = adapt
+        self.margin_db = margin_db
+        self.floor_percentile = floor_percentile
+        self.min_threshold = min_threshold
+        self.max_threshold = max_threshold
+        self._levels = collections.deque(maxlen=max(20, int(window_secs * 1000 / CHUNK_MS)))
+        # Recomputed on a cadence rather than per chunk: sorting 300 floats every
+        # 100 ms would be a real cost on this hardware for no extra accuracy.
+        self._recalc_every = max(10, int(5000 / CHUNK_MS))
+        self._since_recalc = 0
+        self.noise_floor = None
+
+    def _recalc(self):
+        """Threshold = a margin above the quiet quarter of what we have heard.
+
+        The percentile is what makes speech not raise the floor: someone talking
+        occupies the loud end of the window, so the quiet end still describes the
+        room they are talking in.
+        """
+        if len(self._levels) < self._levels.maxlen // 4:
+            return
+        ordered = sorted(self._levels)
+        floor = ordered[int(len(ordered) * self.floor_percentile)]
+        if floor <= -119:                      # a dead or muted microphone
+            return
+        self.noise_floor = floor
+        self.threshold = min(self.max_threshold,
+                             max(self.min_threshold, floor + self.margin_db))
+
     def feed(self, chunk):
         self.total_chunks += 1
-        loud = rms_dbfs(chunk) > self.threshold
+        level = rms_dbfs(chunk)
+        if self.adapt:
+            self._levels.append(level)
+            self._since_recalc += 1
+            if self._since_recalc >= self._recalc_every:
+                self._since_recalc = 0
+                self._recalc()
+        loud = level > self.threshold
         if loud:
             self._quiet = 0
             self._stale = False
@@ -136,7 +191,12 @@ def build(cfg, listing):
     return Listener(detector,
                     cfg("WAKE_GATE_DBFS", "-30", float),
                     cfg("WAKE_GATE_HANGOVER_SECS", "0.8", float),
-                    cfg("WAKE_GATE_IDLE_RESET_SECS", "2.0", float))
+                    cfg("WAKE_GATE_IDLE_RESET_SECS", "2.0", float),
+                    adapt=str(cfg("WAKE_GATE_ADAPT", "1")).strip() not in ("0", "false", "no"),
+                    margin_db=cfg("WAKE_GATE_MARGIN_DB", "8", float),
+                    window_secs=cfg("WAKE_GATE_WINDOW_SECS", "30", float),
+                    min_threshold=cfg("WAKE_GATE_MIN_DBFS", "-48", float),
+                    max_threshold=cfg("WAKE_GATE_MAX_DBFS", "-18", float))
 
 
 def record_event(path, stamp):

@@ -44,6 +44,25 @@ class Unreachable(Exception):
     pass
 
 
+# Set once the wake listener exists. Everything that compares audio against a
+# level reads it from here, so the gate, the end-of-speech detector and the
+# trimmer all move together when the room changes -- which it does by 12 dB
+# between 3am and 4pm on this microphone.
+ROOM = {"floor": None}
+
+
+def threshold_for(name, default, above_floor):
+    """A threshold, preferring one derived from the measured room.
+
+    Falls back to the configured absolute value when the floor is not known yet
+    (the first seconds after start) or when adaptation is switched off.
+    """
+    floor = ROOM.get("floor")
+    if floor is None:
+        return cfg(name, default, float)
+    return floor + above_floor
+
+
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
@@ -54,7 +73,9 @@ def record_until_silence(stream, path, start_window, preroll=b""):
     same breath as the name is not clipped."""
     chunk_ms = 100
     silence_limit = cfg("VAD_SILENCE_SECS", "1.5", float)
-    threshold = cfg("VAD_THRESHOLD_DBFS", "-45", float)
+    # 10 dB over the floor: high enough that room noise counts as silence and the
+    # recording actually ends, low enough that ordinary speech clears it.
+    threshold = threshold_for("VAD_THRESHOLD_DBFS", "-28", cfg("VAD_ABOVE_FLOOR_DB", "10", float))
     max_secs = cfg("VAD_MAX_SECS", "15", float)
     min_secs = cfg("VAD_MIN_SECS", "1.0", float)
     min_speech = cfg("VAD_MIN_SPEECH_SECS", "0.5", float)
@@ -147,7 +168,11 @@ def trim_silence(path, rate, samples, db):
         return path
     win = max(1, int(rate * 0.05))
     margin = cfg("AUDIO_TRIM_MARGIN_SECS", "0.25", float)
-    floor = cfg("AUDIO_TRIM_DBFS", "-26", float)
+    # 6 dB over the floor. A 12.4s recording of a short question transcribed as
+    # one wrong word because most of it was room noise and the decoder spent its
+    # search there; trimming to what is actually above the room fixes that
+    # without touching a single remaining sample.
+    floor = threshold_for("AUDIO_TRIM_DBFS", "-32", cfg("TRIM_ABOVE_FLOOR_DB", "6", float))
 
     loud = []
     for i in range(0, len(samples) - win, win):
@@ -825,6 +850,7 @@ def main():
                     hit = satellite.heard_name()
                 elif listener is not None:
                     hit = listener.feed(chunk)
+                    ROOM["floor"] = listener.noise_floor
                 else:
                     continue
                 if hit:
