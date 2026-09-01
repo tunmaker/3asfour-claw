@@ -41,7 +41,8 @@
       "skills": [
         "notes",
         "groceries",
-        "calendar"
+        "calendar",
+        "voice"
       ],
       "pdfModel": {
         "primary": "llamacpp/qwen3.5-9b-q8",

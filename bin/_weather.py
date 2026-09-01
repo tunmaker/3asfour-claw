@@ -70,20 +70,25 @@ def describe(code):
 
 
 def home(env=os.environ):
-    """(lat, lon, label) for the household.
+    """(lat, lon, label) for the household -- what a missing place means.
 
-    Falls back to the prayer coordinates, which are already configured and
-    describe the same house. Setting WEATHER_LAT/WEATHER_LON separately is only
-    needed if the two should differ, which they should not.
+    Coordinates come from WEATHER_LAT/LON, else the prayer coordinates, which
+    describe the same house. Failing both, WEATHER_PLACE is geocoded, so a
+    deployment configured with nothing but a town name still answers. The label
+    is WEATHER_LABEL (the spoken, Arabic form) when set, else WEATHER_PLACE.
     """
+    place = env.get("WEATHER_PLACE", "")
+    label = env.get("WEATHER_LABEL") or place
     lat = env.get("WEATHER_LAT") or env.get("PRAYER_LAT")
     lon = env.get("WEATHER_LON") or env.get("PRAYER_LON")
-    if not lat or not lon:
-        raise WeatherError(
-            "no coordinates set. WEATHER_LAT/WEATHER_LON, or the PRAYER_LAT/PRAYER_LON "
-            "already used for prayer times."
-        )
-    return float(lat), float(lon), env.get("WEATHER_PLACE", "")
+    if lat and lon:
+        return float(lat), float(lon), label
+    if place:
+        lat, lon, found = find_place(place)
+        return lat, lon, label or found
+    raise WeatherError(
+        "no home configured: set WEATHER_PLACE, or PRAYER_LAT/PRAYER_LON."
+    )
 
 
 def find_place(name):

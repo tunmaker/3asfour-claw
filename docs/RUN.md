@@ -70,8 +70,9 @@ to run, not a boundary -- see the note on exec policy below.
 | `note-add.sh`, `note-search.sh` | Notes in the vault |
 | `grocery.sh` | Grocery list. List-building only — no purchasing capability |
 | `calendar.sh` | CalDAV read and write |
-| `baby-log.sh` | Append-only feed and sleep log |
+| `baby.sh` | Baby journal: feeds, sleep, diapers, notes. Fills in what was not said and prints what it assumed |
 | `quran.sh` | Read-only retrieval from a local Qur'an text |
+| `prayer.sh`, `weather.sh`, `look.sh` | Prayer times (computed locally), Open-Meteo weather, the camera |
 | `whisper-transcribe.sh` | Speech-to-text |
 | `speaker.sh` | Volume of the agent's own speech on the voice satellite |
 
@@ -113,7 +114,7 @@ achieve:
 | Location | Contents |
 |---|---|
 | `$ABBES_VAULT_DIR` | Notes and grocery list — the single source of truth |
-| `$ABBES_DATA_DIR/babylog/` | Feed and sleep CSVs, one file per stream per month |
+| `$ABBES_DATA_DIR/babylog/journal.jsonl` | Baby journal, append-only, one event per line |
 | `$ABBES_DATA_DIR/reference/quran/` | Qur'an text, if installed |
 | `~/.openclaw/workspace/` | System prompt, identity, memory |
 | `~/.local/share/radicale/` | Calendar events |
