@@ -420,7 +420,16 @@
     "whatsapp": {
       "dmPolicy": "allowlist",
       "selfChatMode": true,
-      "groupPolicy": "allowlist"
+      "allowFrom": [
+        "+33XXXXXXXXX"
+      ],
+      "groupPolicy": "allowlist",
+      "groupAllowFrom": [
+        "*"
+      ],
+      "groups": {
+        "<family-group-jid>@g.us": {}
+      }
     }
   }
 }
