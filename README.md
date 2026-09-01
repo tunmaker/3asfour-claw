@@ -12,7 +12,7 @@ retrieval from a local Qur'an text.
 - **Local inference only.** Chat, speech-to-text, embeddings and search are served
   by a separate machine on the LAN. The model catalogue resolves to a single local
   model and unconfigured providers cannot appear.
-- **No general shell.** The agent may run a fixed allowlist of small scripts and
+- **A small set of tools.** The agent is given a fixed set of small scripts and
   nothing else.
 - **Write tools return what they wrote.** A small model will otherwise confirm
   actions it did not perform, so every write verifies itself and prints the stored

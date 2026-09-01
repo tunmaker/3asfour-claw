@@ -6,6 +6,13 @@
 //
 // Like the prayer trigger this only reads. State is capped at 16 KB, so the
 // remembered list is trimmed rather than allowed to grow for the life of the job.
+//
+// Tools are called directly -- exec({...}), not tools.call('exec', {...}).
+// The 2026.8.1 upgrade removed the `tools` global and this script failed five
+// times running with "ReferenceError: tools is not defined" before anyone
+// noticed. Doctor migrates the old idiom, but only from a script with no
+// comments in it, so it left this one alone and said so in a preview nobody
+// read. The returned shape did not change.
 
 const LEAD_MINUTES = 15;
 const REMEMBER = 40;
@@ -17,7 +24,7 @@ const REMEMBER = 40;
 // 15 minutes before midnight is not what "all day" means.
 const LINE = /^(\S+T\d{2}:\d{2}[+\-]\d{2}:\d{2})\t(?!allday\t)(.+?)\s*$/;
 
-const res = await tools.call('exec', { command: 'calendar.sh list 1 --iso' });
+const res = await exec({ command: 'calendar.sh list 1 --iso' });
 const out = String(
   res?.result?.details?.aggregated ??
   res?.result?.details?.stdout ??

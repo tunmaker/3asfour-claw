@@ -91,13 +91,23 @@ def find_place(name):
     data = _get(GEOCODE_URL, {"name": name, "count": 1, "language": "ar", "format": "json"})
     results = data.get("results") or []
     if not results:
-        # Arabic names are patchier in the gazetteer than Latin ones, so a miss
-        # is retried in French before giving up -- this household's places are
-        # mostly French.
-        data = _get(GEOCODE_URL, {"name": name, "count": 1, "language": "fr", "format": "json"})
-        results = data.get("results") or []
-    if not results:
-        raise WeatherError(f"لم أجد مكاناً باسم {name}")
+        # `language` selects the language of the labels coming back, not how the
+        # query is matched, so retrying the same Arabic string in French buys
+        # nothing -- it was tried and it does not rescue a miss.
+        #
+        # Big cities carry Arabic alternate names in the gazetteer and resolve
+        # fine (باريس، تونس، لندن، مرسيليا). Smaller towns do not: <البلدة> is
+        # simply absent, and no query language changes that. The caller has to
+        # try the Latin spelling.
+        #
+        # The message says so explicitly because of what happened without it: the
+        # model read a bare "not found", decided <البلدة> must be الأرجنتين, and
+        # reported the weather in Argentina as though it were the answer. A tool
+        # that fails must say what would succeed, or it gets improvised over.
+        raise WeatherError(
+            f"لم أجد مكاناً باسم {name}. أعد المحاولة بالاسم اللاتيني "
+            f"(مثلاً <town> بدل <البلدة>). لا تستعمل مكاناً آخر."
+        )
     r = results[0]
     # Name and country only. The region comes back in whichever language the
     # gazetteer has it, so including it gives labels that mix scripts mid-phrase.

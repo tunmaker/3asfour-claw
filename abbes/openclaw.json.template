@@ -340,24 +340,10 @@
       "browser"
     ],
     "exec": {
-      "mode": "all",
-      "strictInlineEval": false,
+      "mode": "full",
+      "strictInlineEval": true,
       "pathPrepend": [
         "/home/openclaw/bin"
-      ],
-      "safeBinTrustedDirs": [
-        "/home/openclaw/bin"
-      ],
-      "safeBins": [
-        "calendar.sh",
-        "grocery.sh",
-        "note-add.sh",
-        "note-search.sh",
-        "baby-log.sh",
-        "quran.sh",
-        "prayer.sh",
-        "look.sh",
-        "weather.sh"
       ]
     },
     "fs": {

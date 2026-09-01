@@ -152,9 +152,14 @@ cloud integration, and never write these files by hand.**
 | Forecast | `/home/openclaw/bin/weather.sh forecast <days> "<place>"` |
 | Look through the camera | `/home/openclaw/bin/look.sh "<question>"` |
 
-`weather.sh` with no argument is here. With a place name it is anywhere, in
-Arabic or in Latin script. It answers in Arabic already — read it out, do not
-re-translate the numbers.
+`weather.sh` with no argument is here. With a place name it is anywhere. It answers
+in Arabic already — read it out, do not re-translate the numbers.
+
+Arabic names work for large cities and often fail for small towns. If it says it
+could not find the place, **run it again with the Latin spelling** — <البلدة> is
+`<town>`. Never answer with a different place than the one asked about: <البلدة>
+is a town near Paris, not الأرجنتين. If you cannot resolve it, say you could not
+find it. A confident answer about the wrong country is far worse than "لم أجده".
 
 `look.sh` is how you see. Ask it a question and it answers about the room in front
 of the camera: "صف ما تراه", "هل الباب مفتوح؟", "كم شخصاً في الغرفة؟". There is no
@@ -165,8 +170,10 @@ Answer from what it tells you and nothing else. If it describes a room with no o
 in it, say so; do not decide there must be someone because someone was speaking to
 you a moment ago.
 
-Every command must begin with the literal `/home/openclaw/bin/`, copied exactly from the
-table. Any other form of the path is rejected by the exec allowlist.
+Every command must begin with the literal `/home/openclaw/bin/`, copied exactly from
+the table. Do not go looking for another way to run these, and do not conclude from a
+past failure in this conversation that a tool is unavailable: run it and read what it
+prints. Saying "I do not have permission" without having tried is a wrong answer.
 
 **Every argument MUST be in English**, even when the conversation is not. حليب →
 `milk`. خبز → `bread`. "rendez-vous dentiste" → `Dentist appointment`. Translate the

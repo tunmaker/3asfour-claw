@@ -9,13 +9,20 @@
 // The script only ever reads. Everything that changes the world belongs in the
 // payload, because a payload that fails leaves the returned state unpersisted
 // and the next evaluation is free to fire again.
+//
+// Tools are called directly -- exec({...}), not tools.call('exec', {...}).
+// The 2026.8.1 upgrade removed the `tools` global and this script failed five
+// times running with "ReferenceError: tools is not defined" before anyone
+// noticed. Doctor migrates the old idiom, but only from a script with no
+// comments in it, so it left this one alone and said so in a preview nobody
+// read. The returned shape did not change.
 
 // How stale an arrival may be and still be worth announcing. Cron evaluates
 // once a minute, so 2 covers a late tick without announcing a prayer from an
 // hour ago after a gateway restart.
 const WINDOW_MINUTES = 2;
 
-const res = await tools.call('exec', { command: `prayer.sh due --window ${WINDOW_MINUTES}` });
+const res = await exec({ command: `prayer.sh due --window ${WINDOW_MINUTES}` });
 const out = String(
   res?.result?.details?.aggregated ??
   res?.result?.details?.stdout ??

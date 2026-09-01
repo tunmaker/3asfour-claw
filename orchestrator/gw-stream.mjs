@@ -81,7 +81,10 @@ ws.on("message", async (raw) => {
     if (p) { pending.delete(f.id); f.ok ? p.res(f.payload) : p.rej(f.error); return; }
     if (f.ok && f.payload?.type === "hello-ok") {
       try {
-        const sub = await call("sessions.subscribe", { sessionKey: SESSION });
+        // Since 2026.8.1 this takes sessions.list params and rejects sessionKey.
+        // It never filtered anyway -- an operator connection sees every session,
+        // which is why the events below are matched on runId.
+        const sub = await call("sessions.subscribe", {});
         console.log("  subscribe ok:", JSON.stringify(sub).slice(0, 200));
       } catch (e) { console.log("  subscribe REFUSED:", JSON.stringify(e)); }
       console.log(`> ${MESSAGE}`);
