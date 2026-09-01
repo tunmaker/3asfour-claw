@@ -75,12 +75,13 @@ def record_until_silence(stream, path, start_window, preroll=b""):
     silence_limit = cfg("VAD_SILENCE_SECS", "1.5", float)
     # 10 dB over the floor: high enough that room noise counts as silence and the
     # recording actually ends, low enough that ordinary speech clears it.
-    threshold = threshold_for("VAD_THRESHOLD_DBFS", "-28", cfg("VAD_ABOVE_FLOOR_DB", "10", float))
+    threshold = threshold_for("VAD_THRESHOLD_DBFS", "-28", cfg("VAD_ABOVE_FLOOR_DB", "6", float))
     max_secs = cfg("VAD_MAX_SECS", "15", float)
     min_secs = cfg("VAD_MIN_SECS", "1.0", float)
     min_speech = cfg("VAD_MIN_SPEECH_SECS", "0.5", float)
 
     frames = bytearray(preroll)
+    levels = []
     silent_for = 0.0
     voiced_for = 0.0
     started = time.monotonic()
@@ -94,6 +95,7 @@ def record_until_silence(stream, path, start_window, preroll=b""):
             continue
         frames += buf
         level = rms_dbfs(buf)
+        levels.append(level)
         if level > threshold:
             voiced_for += chunk_ms / 1000.0
             silent_for = 0.0
@@ -112,7 +114,20 @@ def record_until_silence(stream, path, start_window, preroll=b""):
             break
 
     if not heard:
+        # The most common failure is a threshold above the speech it is meant to
+        # detect, and until now that was indistinguishable in the log from a
+        # genuinely empty room. Say which it was.
+        if levels:
+            ordered = sorted(levels)
+            log(f"  no speech: threshold {threshold:.1f} dBFS, heard "
+                f"p50 {ordered[len(ordered)//2]:.1f} p90 {ordered[int(len(ordered)*0.9)]:.1f} "
+                f"max {ordered[-1]:.1f} over {len(levels)} windows")
         return None
+
+    if levels:
+        ordered = sorted(levels)
+        log(f"  levels: threshold {threshold:.1f} dBFS, p50 {ordered[len(ordered)//2]:.1f} "
+            f"p90 {ordered[int(len(ordered)*0.9)]:.1f} max {ordered[-1]:.1f}")
 
     with wave.open(str(path), "w") as w:
         w.setnchannels(1)
