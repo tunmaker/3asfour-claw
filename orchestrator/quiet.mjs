@@ -78,9 +78,24 @@ export class QuietHours {
     return win;
   }
 
-  /** True when unprompted speech must be refused right now. */
-  blocks(date = new Date()) {
-    return isWithin(this.window(), date);
+  /**
+   * Sources allowed to speak inside the window anyway.
+   *
+   * This exists for one real case: fajr is inside any sensible quiet window all
+   * year, and whether the household wants to be woken for it is a decision for
+   * the household, not a default. Empty unless someone sets it, and it is a
+   * configured exception rather than a caller-supplied override so that the
+   * refusal still happens in one place.
+   */
+  exempt() {
+    const raw = fromEnvFile(this.envFile, "QUIET_HOURS_EXEMPT") ?? process.env.QUIET_HOURS_EXEMPT ?? "";
+    return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
+  }
+
+  /** True when unprompted speech from this source must be refused right now. */
+  blocks(source = null, date = new Date()) {
+    if (!isWithin(this.window(), date)) return false;
+    return !(source && this.exempt().has(source));
   }
 
   nightVolume() {

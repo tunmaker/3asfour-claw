@@ -231,7 +231,7 @@ function announce(text, { source = "unknown" } = {}) {
   const job = announceQueue.then(async () => {
     const clean = String(text || "").trim();
     if (!clean) return { skipped: "empty" };
-    if (quiet.blocks()) {
+    if (quiet.blocks(source)) {
       log(`announce refused (quiet hours) from ${source}: ${JSON.stringify(clean.slice(0, 60))}`);
       return { skipped: "quiet-hours" };
     }
@@ -244,7 +244,7 @@ function announce(text, { source = "unknown" } = {}) {
       return { skipped: "busy" };
     }
     // Re-check: the wait above can cross into the quiet window.
-    if (quiet.blocks()) {
+    if (quiet.blocks(source)) {
       log(`announce refused (quiet hours, after waiting) from ${source}`);
       return { skipped: "quiet-hours" };
     }
@@ -311,6 +311,7 @@ const server = http.createServer(async (req, res) => {
       turnsInFlight,
       quietHours: win ? win.spec : null,
       quietNow: quiet.blocks(),
+      quietExempt: [...quiet.exempt()],
     }));
     return;
   }
@@ -347,7 +348,11 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ error: "no text in payload", sawKeys: Object.keys(body || {}) }));
       return;
     }
-    const source = String(body.source || req.headers["x-abbes-source"] || "http");
+    // Query param first: cron's webhook delivery controls the URL but not the
+    // body, so ?source=cron:abbes-prayer is the only way a job can name itself
+    // -- and naming itself is what lets QUIET_HOURS_EXEMPT single it out.
+    const source = String(url.searchParams.get("source") || body.source ||
+                          req.headers["x-abbes-source"] || "http");
     const out = await announce(text, { source });
     res.writeHead(out.skipped ? 202 : 200, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: !out.skipped, ...out }));

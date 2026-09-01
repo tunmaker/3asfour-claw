@@ -34,22 +34,32 @@ def cmd_add(summary, when, minutes="60"):
     calendar().save_event(cal.to_ical().decode())
     print(f"Added: {summary} — {start:%Y-%m-%d %H:%M} to {end:%H:%M} ({TZ.key})")
 
-def cmd_list(days="14"):
+def cmd_list(days="14", fmt=""):
+    # --iso prints an offset-bearing timestamp per line, tab separated. The
+    # human format renders in TZ while the host may well be on UTC, so anything
+    # that compares these times against the clock has to be told the offset
+    # rather than left to guess it from its own locale.
+    iso = fmt == "--iso"
     start = dt.datetime.now(TZ)
     end = start + dt.timedelta(days=int(days))
     events = calendar().search(start=start, end=end, event=True, expand=True)
     if not events:
-        print(f"No appointments in the next {days} days."); return
+        if not iso:
+            print(f"No appointments in the next {days} days.")
+        return
     rows = []
     for e in events:
         for comp in Calendar.from_ical(e.data).walk("VEVENT"):
             s = comp.get("dtstart").dt
+            summary = comp.get("summary")
             if isinstance(s, dt.datetime):
                 s = s.astimezone(TZ)
-                rows.append((s, f"{s:%Y-%m-%d %H:%M}  {comp.get('summary')}"))
+                rows.append((s, f"{s.isoformat(timespec='minutes')}\t{summary}" if iso
+                             else f"{s:%Y-%m-%d %H:%M}  {summary}"))
             else:
-                rows.append((dt.datetime.combine(s, dt.time(0), TZ),
-                             f"{s:%Y-%m-%d} (journée)  {comp.get('summary')}"))
+                midnight = dt.datetime.combine(s, dt.time(0), TZ)
+                rows.append((midnight, f"{midnight.isoformat(timespec='minutes')}\tallday\t{summary}" if iso
+                             else f"{s:%Y-%m-%d} (journée)  {summary}"))
     for _, line in sorted(rows):
         print(line)
 

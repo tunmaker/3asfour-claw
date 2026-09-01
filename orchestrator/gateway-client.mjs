@@ -35,10 +35,13 @@ export function messageText(m) {
 }
 
 export class GatewayClient extends EventEmitter {
-  constructor({ url, envFile, log = () => {} }) {
+  constructor({ url, envFile, log = () => {}, scopes = ["operator.read", "operator.write"] }) {
     super();
     this.url = url;
     this.envFile = envFile;
+    // cron.* and sessions.reset need operator.admin; the voice path does not,
+    // and asking for it there would widen what a compromised turn could reach.
+    this.scopes = scopes;
     this.log = log;
     this.ws = null;
     this.ready = false;
@@ -65,7 +68,7 @@ export class GatewayClient extends EventEmitter {
             params: {
               minProtocol: 4, maxProtocol: 4,
               client: { id: "gateway-client", version: "0.1.0", platform: "linux", mode: "backend" },
-              role: "operator", scopes: ["operator.read", "operator.write"],
+              role: "operator", scopes: this.scopes,
               caps: [], commands: [], permissions: {},
               auth: { token: readToken(this.envFile) },
               locale: "ar-TN", userAgent: "abbes-orchestrator/0.1.0",
