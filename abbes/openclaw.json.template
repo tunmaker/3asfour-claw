@@ -9,6 +9,12 @@
       "models": {
         "llamacpp/qwen3.5-9b-q8": {
           "alias": "qwen"
+        },
+        "llamacpp/qwen3.5-9b-q8-auto": {
+          "alias": "qwen-auto"
+        },
+        "llamacpp/qwen3.5-9b-q8-vision": {
+          "alias": "qwen-vision"
         }
       },
       "thinkingDefault": "off",
@@ -87,6 +93,34 @@
       "enabled": true
     }
   },
+  "cron": {
+    "enabled": true,
+    "maxConcurrentRuns": 4,
+    "triggers": {
+      "enabled": true,
+      "minIntervalMs": 30000
+    },
+    "webhookToken": {
+      "source": "env",
+      "provider": "default",
+      "id": "OPENCLAW_CRON_WEBHOOK_TOKEN"
+    },
+    "sessionRetention": "24h"
+  },
+  "hooks": {
+    "enabled": true,
+    "path": "/hooks",
+    "token": {
+      "source": "env",
+      "provider": "default",
+      "id": "OPENCLAW_HOOK_TOKEN"
+    },
+    "allowRequestSessionKey": true,
+    "allowedSessionKeyPrefixes": [
+      "autonomy",
+      "vision"
+    ]
+  },
   "meta": {
     "lastTouchedVersion": "2026.7.1-2",
     "lastTouchedAt": "2026-08-28T00:29:48.542Z"
@@ -106,7 +140,7 @@
         "models": [
           {
             "id": "qwen3.5-9b-q8",
-            "name": "Qwen3.5 9B Q8_0 (local, Arc A770)",
+            "name": "Qwen3.5 9B Q8_0 (local, Arc A770) - voice",
             "reasoning": false,
             "input": [
               "text",
@@ -124,7 +158,56 @@
             "params": {
               "chat_template_kwargs": {
                 "enable_thinking": false
-              }
+              },
+              "id_slot": 0
+            }
+          },
+          {
+            "id": "qwen3.5-9b-q8-auto",
+            "name": "Qwen3.5 9B Q8_0 - autonomy lane",
+            "reasoning": false,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "contextTokens": 98304,
+            "maxTokens": 8192,
+            "params": {
+              "chat_template_kwargs": {
+                "enable_thinking": false
+              },
+              "id_slot": 1
+            }
+          },
+          {
+            "id": "qwen3.5-9b-q8-vision",
+            "name": "Qwen3.5 9B Q8_0 - image probes",
+            "reasoning": false,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "contextTokens": 98304,
+            "maxTokens": 8192,
+            "params": {
+              "chat_template_kwargs": {
+                "enable_thinking": false
+              },
+              "id_slot": 2
             }
           }
         ]
@@ -286,8 +369,8 @@
       "browser"
     ],
     "exec": {
-      "mode": "allowlist",
-      "strictInlineEval": true,
+      "mode": "all",
+      "strictInlineEval": false,
       "pathPrepend": [
         "/home/openclaw/bin"
       ],
@@ -305,7 +388,7 @@
       ]
     },
     "fs": {
-      "workspaceOnly": true
+      "workspaceOnly": false
     },
     "elevated": {
       "enabled": false
