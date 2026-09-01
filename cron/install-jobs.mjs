@@ -26,15 +26,24 @@ const log = (...a) => console.log(...a);
 
 const script = (name) => readFileSync(join(HERE, name), "utf8");
 
-// Every job is an agent turn in the autonomy session. Never the voice session:
-// proactive turns must not accumulate in the transcript the user talks to.
+// Command payloads, not agent turns.
+//
+// The first version routed these through the model in a dedicated autonomy
+// session. It worked -- trigger fired, correct slot, no history pollution --
+// and it was still wrong: the sentence is already known before the job starts,
+// so the model spent 33.7 seconds and answered "سأقوم بتنبيهك" ("I will alert
+// you"), an acknowledgement rather than the announcement. A fixed time needs no
+// judgement, so it gets no model, and the wording stops being a lottery.
+//
+// The model is still there for the things that do need judgement. This is not
+// one of them.
+//
+// A command that prints only NO_REPLY posts nothing, which is how these stay
+// silent on the minutes where the trigger fired but the situation has since
+// changed.
 const base = {
-  sessionTarget: "session:autonomy",
-  payload: { kind: "agentTurn" },
-  model: "llamacpp/qwen3.5-9b-q8-auto",
-  // The URL goes in `to`, not `url`: the delivery schema is shared with the
-  // chat channels, where `to` is the recipient.
-  delivery: { mode: "webhook" },
+  sessionTarget: "isolated",
+  delivery: { mode: "none" },
 };
 
 const JOBS = [
@@ -42,15 +51,13 @@ const JOBS = [
     name: "abbes-prayer",
     schedule: { kind: "every", everyMs: 60000 },
     trigger: { script: script("prayer-trigger.js"), once: false },
-    message:
-      "أعلن وقت الصلاة كما ورد أعلاه. جملة واحدة قصيرة بالعربية الفصحى فقط.",
+    command: "announce-prayer.sh",
   },
   {
     name: "abbes-calendar",
     schedule: { kind: "every", everyMs: 60000 },
     trigger: { script: script("calendar-trigger.js"), once: false },
-    message:
-      "ذكّر بالموعد كما ورد أعلاه. جملة واحدة قصيرة بالعربية الفصحى فقط.",
+    command: "announce-calendar.sh",
   },
 ];
 
@@ -74,10 +81,10 @@ async function main() {
       schedule: def.schedule,
       trigger: def.trigger,
       sessionTarget: base.sessionTarget,
-      payload: { ...base.payload, message: def.message, model: base.model },
-      // Each job names itself in the URL so quiet hours can exempt one job
-      // without exempting proactive speech in general.
-      delivery: { ...base.delivery, to: `${ANNOUNCE}?source=cron:${def.name}` },
+      // The script names itself to the announce lane, so quiet hours can exempt
+      // one job without exempting proactive speech in general.
+      payload: { kind: "command", argv: ["sh", "-lc", `$HOME/bin/${def.command}`], timeoutSeconds: 120 },
+      delivery: base.delivery,
     };
     const found = byName.get(def.name);
     if (DRY) {

@@ -39,3 +39,33 @@ ok(!isWithin(day, at(3, 0)), "non-wrapping excludes the night");
 ok(!isWithin(null, at(3, 0)), "no window blocks nothing");
 
 console.log(`quiet.test.mjs: ${n} assertions passed`);
+
+// The env file is authoritative when it exists. systemd loads it into the
+// process environment at start, so a key commented out in the file must not
+// keep resolving to what it held at the last restart -- especially this one,
+// which grants permission to speak at night.
+import { QuietHours } from "./quiet.mjs";
+import { writeFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const envPath = join(tmpdir(), `quiet-test-${process.pid}.env`);
+process.env.QUIET_HOURS_EXEMPT = "stale:from-environment";
+
+writeFileSync(envPath, "QUIET_HOURS=21:30-07:00\n# QUIET_HOURS_EXEMPT=cron:x\n");
+const q = new QuietHours({ envFile: envPath });
+assert.deepEqual([...q.exempt()], [], "commented-out key means none, not the stale environment");
+assert.equal(q.window().spec, "21:30-07:00");
+assert.ok(q.blocks("cron:x", new Date(2026, 8, 1, 23, 0)), "not exempt, so blocked");
+
+writeFileSync(envPath, "QUIET_HOURS=21:30-07:00\nQUIET_HOURS_EXEMPT=cron:x\n");
+assert.deepEqual([...q.exempt()], ["cron:x"], "uncommenting takes effect with no restart");
+assert.ok(!q.blocks("cron:x", new Date(2026, 8, 1, 23, 0)), "exempt source speaks at night");
+assert.ok(q.blocks("cron:other", new Date(2026, 8, 1, 23, 0)), "a different source is still blocked");
+assert.ok(!q.blocks("cron:other", new Date(2026, 8, 1, 12, 0)), "midday blocks nobody");
+
+unlinkSync(envPath);
+assert.deepEqual([...new QuietHours({ envFile: envPath }).exempt()], ["stale:from-environment"],
+  "with no file at all, the environment is the only source there is");
+
+console.log("quiet.test.mjs: 7 further assertions on env-file precedence passed");

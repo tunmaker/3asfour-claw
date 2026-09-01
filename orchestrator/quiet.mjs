@@ -40,14 +40,32 @@ export function isWithin(win, date = new Date()) {
     : min >= win.startMin || min < win.endMin;
 }
 
+/**
+ * The env file is authoritative whenever it can be read at all.
+ *
+ * Falling back to process.env per-key looks harmless and is not: systemd loads
+ * this same file into the environment at service start, so a key deleted or
+ * commented out in the file still resolves to whatever it held at the last
+ * restart. Commenting out QUIET_HOURS_EXEMPT and watching the orchestrator go
+ * on believing a job was exempt is how this was found -- and for a setting that
+ * grants permission to speak at night, a stale value fails in the wrong
+ * direction.
+ *
+ * Returns undefined only when there is no readable file, which is the one case
+ * where process.env is the better source.
+ */
 function fromEnvFile(file, key) {
+  let text;
   try {
-    for (const line of readFileSync(file, "utf8").split("\n")) {
-      const m = line.match(new RegExp(`^\\s*${key}\\s*=\\s*(.*)$`));
-      if (m) return m[1].trim().replace(/^["']|["']$/g, "");
-    }
-  } catch { /* no env file is not an error; quiet hours are optional */ }
-  return null;
+    text = readFileSync(file, "utf8");
+  } catch {
+    return undefined;   // no file: the caller may fall back
+  }
+  for (const line of text.split("\n")) {
+    const m = line.match(new RegExp(`^\\s*${key}\\s*=\\s*(.*)$`));
+    if (m) return m[1].trim().replace(/^["']|["']$/g, "");
+  }
+  return "";            // file exists and does not set it: that is the answer
 }
 
 /**
