@@ -25,8 +25,13 @@ def main(argv):
     now = datetime.now(cfg["tz"])
 
     if cmd == "today":
+        # Only the first future entry is "next" -- marking every one of them,
+        # which is what a bare `when > now` does, says nothing at all.
+        marked = False
         for name, when in sorted(_prayer.times(now.date()).items(), key=lambda kv: kv[1]):
-            mark = "  <- next" if when > now else ""
+            mark = ""
+            if not marked and when > now:
+                mark, marked = "  <- next", True
             print(f"{_prayer.NAMES_AR[name]:<8} {name:<8} {when:%H:%M}{mark}")
         return 0
 

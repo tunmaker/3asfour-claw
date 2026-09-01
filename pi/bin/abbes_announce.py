@@ -23,10 +23,10 @@ FRAME_SPEECH = 0x81
 FRAME_SPEECH_END = 0x82
 FRAME_CONTROL = 0x83
 
-# Long enough that a quiet night does not reconnect, short enough that a dead
-# socket is noticed. The orchestrator sends nothing between announcements, so
-# this is the only thing that distinguishes silence from a broken link.
-READ_TIMEOUT = 900
+# The orchestrator pings every 30s, so this only fires when the link is really
+# gone. Before the ping existed this timeout fired on every quiet quarter hour,
+# and each reconnect left a listener behind on the server that nothing removed.
+READ_TIMEOUT = 120
 
 
 def _read_exactly(fh, n):
@@ -126,7 +126,12 @@ class AnnounceListener:
 
     def _frame(self, kind, body):
         if kind == FRAME_CONTROL:
-            self.log(f"announce: control {body.decode('utf-8', 'replace')[:120]}")
+            text = body.decode("utf-8", "replace")
+            # Pings arrive every 30s and prove the link in both directions. They
+            # are why the read timeout below never fires on a quiet night; they
+            # are not worth a log line each.
+            if '"ping"' not in text:
+                self.log(f"announce: control {text[:120]}")
             return
         if kind == FRAME_SPEECH:
             self._speak_chunk(body)

@@ -99,9 +99,8 @@ class CameraPoller:
                 # blind one.
                 if self.consecutive_failures == self.wedge_after:
                     self.log(f"camera: {self.wedge_after} grabs failed in a row; "
-                             f"the device is probably wedged and needs "
-                             f"'sudo modprobe -r uvcvideo && sudo modprobe uvcvideo' "
-                             f"after a USB reset. Still listening.")
+                             f"the device is wedged. Run abbes-camera-reset.sh. "
+                             f"Still listening.")
             else:
                 if self.consecutive_failures >= self.wedge_after:
                     self.log("camera: recovered")

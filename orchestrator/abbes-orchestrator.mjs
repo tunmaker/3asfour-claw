@@ -209,6 +209,26 @@ function writeFrame(res, kind, body) {
 
 const listeners = new Set();
 
+// A silent connection is indistinguishable from a dead one at both ends. The Pi
+// gives up after its read timeout and reconnects, but the socket it abandoned
+// stays in this set until something writes to it -- so the count climbed one per
+// reconnect, and announcements were being written to sockets nobody was reading.
+// A ping proves the link in both directions and gives us a write that fails.
+const PING_MS = +(process.env.ANNOUNCE_PING_MS || 30000);
+setInterval(() => {
+  const ping = Buffer.from(JSON.stringify({ type: "ping", at: Date.now() }));
+  for (const res of [...listeners]) {
+    let alive = false;
+    try { alive = writeFrame(res, F_CONTROL, ping) !== undefined && !res.destroyed; }
+    catch { alive = false; }
+    if (!alive) {
+      listeners.delete(res);
+      log(`announce listener dropped on a failed ping (${listeners.size} left)`);
+      try { res.end(); } catch { /* already gone */ }
+    }
+  }
+}, PING_MS).unref();
+
 // A turn already owns the speaker. Announcing into one would talk over Abbes
 // answering a question, which is worse than being late.
 let turnsInFlight = 0;
