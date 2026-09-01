@@ -164,6 +164,32 @@ def _neg(x):
     return None if x is None else -x
 
 
+def most_recent(now=None, env=os.environ, include_sunrise=False):
+    """(name, when) for the prayer that has most recently arrived.
+
+    The counterpart to upcoming(), and the one a per-minute job actually needs.
+    "Announce at the time itself" cannot be expressed with upcoming() alone: the
+    instant a prayer arrives it stops being upcoming, so a check for "is the next
+    prayer due now" is false a second before and looking at a different prayer a
+    second after.
+    """
+    cfg = settings(env)
+    now = now or datetime.now(cfg["tz"])
+    wanted = [p for p in ORDER if include_sunrise or p != "sunrise"]
+
+    best = (None, None)
+    for offset in (0, -1):                 # today, then yesterday for after-isha
+        day = (now + timedelta(days=offset)).date()
+        for name, when in times(day, env).items():
+            if name not in wanted or when > now:
+                continue
+            if best[1] is None or when > best[1]:
+                best = (name, when)
+        if best[1] is not None:
+            break
+    return best
+
+
 def upcoming(now=None, env=os.environ, include_sunrise=False):
     """(name, when) for the next prayer, looking into tomorrow if need be."""
     cfg = settings(env)

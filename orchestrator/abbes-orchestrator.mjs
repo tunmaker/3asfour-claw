@@ -48,6 +48,8 @@ const CAPTION_URL   = process.env.CAPTION_URL || "";
 // arriving with a deploy.
 const VISION_TRIGGER = process.env.VISION_TRIGGER_ENABLED === "1";
 const GW_HTTP       = process.env.GW_HTTP || GW_URL.replace(/^ws/, "http");
+const QWEN_VISION_URL = process.env.VISION_QWEN_URL || "";
+const LLAMACPP_KEY    = process.env.LLAMACPP_API_KEY || "";
 
 const log = (...a) => console.log(`[${new Date().toISOString().slice(11, 23)}]`, ...a);
 
@@ -343,6 +345,41 @@ async function onSceneChange({ present, caption }) {
   }
 }
 
+/**
+ * Ask Qwen about a frame, on the slot reserved for image prefills.
+ *
+ * id_slot keeps a 1024-token image out of the voice session's slot, which would
+ * otherwise cost that session its cached prefix and turn a 0.09s prefill into
+ * a 9s one on the next thing anybody says out loud.
+ */
+async function askQwenAboutImage(jpeg, prompt) {
+  if (!QWEN_VISION_URL) throw new Error("VISION_QWEN_URL is not set");
+  const res = await fetch(QWEN_VISION_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(LLAMACPP_KEY ? { authorization: `Bearer ${LLAMACPP_KEY}` } : {}),
+    },
+    body: JSON.stringify({
+      model: "qwen3.5-9b-q8-vision",
+      id_slot: 2,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${jpeg.toString("base64")}` } },
+          { type: "text", text: prompt },
+        ],
+      }],
+      max_tokens: 200,
+      temperature: 0.3,
+    }),
+    signal: AbortSignal.timeout(120000),
+  });
+  if (!res.ok) throw new Error(`qwen vision ${res.status}`);
+  const d = await res.json();
+  return (d.choices?.[0]?.message?.content || "").trim();
+}
+
 function readHookToken() {
   try {
     for (const line of readFileSync(ENV_FILE, "utf8").split("\n")) {
@@ -433,6 +470,36 @@ const server = http.createServer(async (req, res) => {
     if (changed && VISION_TRIGGER) await onSceneChange(changed);
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ changed: Boolean(changed), ...(changed || {}) }));
+    return;
+  }
+
+  // "Take a picture and tell me what you see." The Pi polls every few seconds,
+  // so the newest frame is a few seconds old at worst -- fresh enough that
+  // asking it to grab another would add latency for nothing.
+  if (req.method === "POST" && url.pathname === "/vision/look") {
+    if (!vision) { res.writeHead(503, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "vision is not configured" })); return; }
+    if (!vision.lastFrame) { res.writeHead(503, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "no frame yet; is the camera running?" })); return; }
+
+    let body = {};
+    try { body = JSON.parse((await readBody(req, 64 * 1024)).toString("utf8") || "{}"); } catch { /* defaults */ }
+    const prompt = String(body.prompt || "Describe what you see in this image.").slice(0, 500);
+    const t0 = Date.now();
+    try {
+      // The 256M captioner is for the gate, where the question is closed and the
+      // cost is paid every few seconds. A person asking what the camera sees
+      // deserves the model that can actually answer, on its own pinned slot so
+      // the image prefill cannot evict the voice session's prefix.
+      const answer = body.quick
+        ? await vision.caption(vision.lastFrame, prompt, { maxTokens: 80 })
+        : await askQwenAboutImage(vision.lastFrame, prompt);
+      log(`vision/look (${body.quick ? "small" : "qwen"}) ${Date.now() - t0}ms: ${answer.slice(0, 80)}`);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ answer, ms: Date.now() - t0, model: body.quick ? "smolvlm" : "qwen" }));
+    } catch (e) {
+      log(`vision/look failed: ${e.message}`);
+      res.writeHead(502, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: e.message }));
+    }
     return;
   }
 

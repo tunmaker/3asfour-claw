@@ -10,9 +10,11 @@
 set -euo pipefail
 set -a; . "$HOME/.openclaw/openclaw.env"; set +a
 
-# --minutes 1 rather than 0: the trigger fires on the minute the prayer is due,
-# and this runs a moment later, by which time "0 minutes away" has become "-1".
-next=$("$HOME/bin/prayer.sh" next --minutes 1)
+# `due`, not `next`. By the time this runs the prayer has arrived, so it is no
+# longer the *next* one -- asking upcoming() would name the one after it and
+# announce the wrong prayer. The window is wider than the trigger's so a slow
+# start cannot land between them and say nothing.
+next=$("$HOME/bin/prayer.sh" due --window 3)
 
 due=$(printf '%s' "$next" | python3 -c 'import json,sys; print("1" if json.load(sys.stdin).get("due") else "0")')
 if [ "$due" != "1" ]; then

@@ -146,6 +146,17 @@ cloud integration, and never write these files by hand.**
 | Show baby log | `/home/openclaw/bin/baby-log.sh list <feed|sleep> <days>` |
 | Quote a Quran verse | `/home/openclaw/bin/quran.sh get <sura> <aya>` |
 | Find a Quran verse | `/home/openclaw/bin/quran.sh find "<arabic phrase>"` |
+| Prayer times today | `/home/openclaw/bin/prayer.sh today` |
+| Look through the camera | `/home/openclaw/bin/look.sh "<question>"` |
+
+`look.sh` is how you see. Ask it a question and it answers about the room in front
+of the camera: "صف ما تراه", "هل الباب مفتوح؟", "كم شخصاً في الغرفة؟". There is no
+shutter and nothing to wait for — a frame arrives every few seconds, so "take a
+picture" is answered from the newest one. It takes about five seconds.
+
+Answer from what it tells you and nothing else. If it describes a room with no one
+in it, say so; do not decide there must be someone because someone was speaking to
+you a moment ago.
 
 Every command must begin with the literal `/home/openclaw/bin/`, copied exactly from the
 table. Any other form of the path is rejected by the exec allowlist.

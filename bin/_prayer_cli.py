@@ -45,18 +45,44 @@ def main(argv):
             return 1
         in_secs = (when - now).total_seconds()
         print(json.dumps({
-            # Stable across evaluations, so the trigger can fire exactly once.
             "id": f"{when:%Y-%m-%d}:{name}",
             "name": name,
             "name_ar": _prayer.NAMES_AR[name],
             "at": when.isoformat(timespec="minutes"),
             "hhmm": f"{when:%H:%M}",
             "in_minutes": round(in_secs / 60),
-            "due": bool(lead and 0 <= in_secs <= lead * 60),
+            # A lead of 0 means "not until it arrives", which upcoming() can
+            # never satisfy -- it only returns prayers still in the future. Use
+            # `due` for that. The earlier `bool(lead and ...)` also made 0 mean
+            # "never" rather than "now", so the trigger could not fire at all.
+            "due": lead > 0 and 0 <= in_secs <= lead * 60,
         }, ensure_ascii=False))
         return 0
 
-    print(f"prayer: unknown command {cmd!r}; try today or next", file=sys.stderr)
+    if cmd == "due":
+        # Has a prayer arrived within the last `window` minutes? This is what a
+        # once-a-minute job asks, and it announces on time rather than early.
+        window = 2
+        if "--window" in argv:
+            window = int(argv[argv.index("--window") + 1])
+        name, when = _prayer.most_recent(now)
+        if not name:
+            print(json.dumps({"due": False}))
+            return 0
+        ago = (now - when).total_seconds()
+        print(json.dumps({
+            # Stable across evaluations, so the trigger fires exactly once.
+            "id": f"{when:%Y-%m-%d}:{name}",
+            "name": name,
+            "name_ar": _prayer.NAMES_AR[name],
+            "at": when.isoformat(timespec="minutes"),
+            "hhmm": f"{when:%H:%M}",
+            "minutes_ago": round(ago / 60),
+            "due": 0 <= ago <= window * 60,
+        }, ensure_ascii=False))
+        return 0
+
+    print(f"prayer: unknown command {cmd!r}; try today, next or due", file=sys.stderr)
     return 2
 
 

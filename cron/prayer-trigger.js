@@ -10,9 +10,12 @@
 // payload, because a payload that fails leaves the returned state unpersisted
 // and the next evaluation is free to fire again.
 
-const LEAD_MINUTES = 0;   // announce at the time itself, not before
+// How stale an arrival may be and still be worth announcing. Cron evaluates
+// once a minute, so 2 covers a late tick without announcing a prayer from an
+// hour ago after a gateway restart.
+const WINDOW_MINUTES = 2;
 
-const res = await tools.call('exec', { command: `prayer.sh next --minutes ${LEAD_MINUTES}` });
+const res = await tools.call('exec', { command: `prayer.sh due --window ${WINDOW_MINUTES}` });
 const out = String(
   res?.result?.details?.aggregated ??
   res?.result?.details?.stdout ??
@@ -43,8 +46,7 @@ if (!out) {
       // Arabic so the model does not have to translate it, and the instruction
       // is explicit because a scheduled job infers its language from nothing.
       message: fire
-        ? `حان الآن وقت صلاة ${next.name_ar} (${next.hhmm}). ` +
-          `أعلن ذلك بجملة واحدة قصيرة بالعربية الفصحى، دون أي إضافات.`
+        ? `حان الآن وقت صلاة ${next.name_ar} (${next.hhmm}).`
         : undefined,
       // Only advance the marker when firing. Recording it on a quiet evaluation
       // would consume the id and silence the actual announcement a minute later.
