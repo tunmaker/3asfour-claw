@@ -149,7 +149,32 @@ function stripTrigger(text, words) {
 
 // ------------------------------------------------------------------ the turn
 
-const gw = new GatewayClient({ url: GW_URL, envFile: ENV_FILE, log });
+// operator.admin: sessions.reset demands it; read+write cover everything else.
+const gw = new GatewayClient({ url: GW_URL, envFile: ENV_FILE, log,
+  scopes: ["operator.read", "operator.write", "operator.admin"] });
+
+// The voice session must stay small. The gateway's proactive compaction
+// measures against the model's full context window, not the 16k voice lane,
+// so it never fires here -- history just grows until the lane is full and the
+// turn dies with stopReason "length" and no output. Guard it ourselves: start
+// a fresh session after a long quiet gap, and when a turn comes back failed,
+// reset and retry once. Voice history is worth minutes, not days.
+const VOICE_IDLE_RESET_MS = Number(process.env.ABBES_VOICE_IDLE_RESET_MS || 30 * 60 * 1000);
+let lastVoiceTurnAt = 0;
+
+async function freshVoiceSession(reason) {
+  log(`voice session reset (${reason})`);
+  try { await gw.call("sessions.reset", { key: SESSION_KEY }); }
+  catch (e) { log("reset failed:", e.message); }
+  await pinVoiceModel();
+}
+
+function turnFailed(turn) {
+  const text = (turn.text || "").trim();
+  if (turn.stopReason === "error") return true;
+  if (text.startsWith("⚠")) return true;
+  return !text && turn.tools.length === 0;
+}
 
 /**
  * One turn, start to finish. `onAudio(buf, meta)` is called per sentence as soon
@@ -167,7 +192,6 @@ async function runTurn(wav, { onAudio, onTranscript, triggerWords } = {}) {
   onTranscript?.(transcript);
   if (!transcript) return { transcript: "", reply: "", marks, empty: true };
 
-  const chunker = new Chunker();
   let queue = Promise.resolve();
   let index = 0;
   const speak = (sentence) => {
@@ -180,15 +204,33 @@ async function runTurn(wav, { onAudio, onTranscript, triggerWords } = {}) {
     }).catch((e) => log("tts failed:", e.message));
   };
 
-  const turn = await gw.sendTurn(SESSION_KEY, transcript, {
-    onDelta: (_d, _full, replaced) => {
-      if (replaced) { chunker.replace(_full); return; }
-      for (const s of chunker.push(_d)) speak(s);
-    },
-    onToolStart: (name) => log(`  tool: ${name}`),
-  });
+  // Sentences stream to the speaker as they arrive; error banners ("⚠ ...")
+  // stream the same way, so filter those out rather than speaking them.
+  const attempt = async () => {
+    const chunker = new Chunker();
+    const say = (s) => { if (!s.trimStart().startsWith("⚠")) speak(s); };
+    const turn = await gw.sendTurn(SESSION_KEY, transcript, {
+      onDelta: (_d, _full, replaced) => {
+        if (replaced) { chunker.replace(_full); return; }
+        for (const s of chunker.push(_d)) say(s);
+      },
+      onToolStart: (name) => log(`  tool: ${name}`),
+    });
+    for (const s of chunker.end()) say(s);
+    return turn;
+  };
 
-  for (const s of chunker.end()) speak(s);
+  if (lastVoiceTurnAt && Date.now() - lastVoiceTurnAt > VOICE_IDLE_RESET_MS) {
+    await freshVoiceSession("idle");
+  }
+
+  let turn = await attempt();
+  if (turnFailed(turn)) {
+    log(`  turn failed (stopReason ${turn.stopReason}); retrying on a fresh session`);
+    await freshVoiceSession("failed turn");
+    turn = await attempt();
+  }
+  lastVoiceTurnAt = Date.now();
   await queue;
 
   marks.firstDeltaMs = turn.firstDeltaMs;

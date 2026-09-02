@@ -126,7 +126,7 @@
             },
             "contextWindow": 65536,
             "contextTokens": 16384,
-            "maxTokens": 8192,
+            "maxTokens": 1024,
             "params": {
               "chat_template_kwargs": {
                 "enable_thinking": false
@@ -337,6 +337,7 @@
     "exec": {
       "mode": "full",
       "strictInlineEval": true,
+      "backgroundMs": 60000,
       "pathPrepend": [
         "/home/openclaw/bin"
       ]
