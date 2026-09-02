@@ -16,15 +16,16 @@
 # prefix. --quick uses the small captioner instead, which is for the presence
 # gate and describes furniture adequately and little else.
 #
-# --photo saves the frame to the FIXED path $ABBES_DATA_DIR/camera/latest.jpg
-# and prints "MEDIA:<that path>". The path never changes, on purpose: the
-# model attaching the picture must copy the line verbatim, and a constant is
-# the only thing a small model copies reliably (it once invented a plausible
-# timestamped filename, and the attachment failed with file-not-found).
-# Timestamped copies of the last 20 shots are kept alongside for history. In
-# photo mode the analysis is best effort with a shorter cap -- the picture
-# still ships when the vision lane is busy; it is the deliverable, the
-# description is garnish.
+# --photo saves the frame under $ABBES_DATA_DIR/camera and prints
+# "MEDIA:<path>" for the model to copy verbatim into its reply. The filename
+# is unique per shot, and must be: re-sending a path the session has already
+# attached makes the gateway resolve it from session history, whose stored
+# block has no inline data, and the reply shows "omitted image payload"
+# instead of the picture (tried a fixed latest.jpg; the second send always
+# broke). latest.jpg is still written as a convenience copy -- never attach
+# it. The last 20 shots are kept. In photo mode the analysis is best effort
+# with a shorter cap: the picture still ships when the vision lane is busy;
+# it is the deliverable, the description is garnish.
 set -euo pipefail
 set -a; . "$HOME/.openclaw/openclaw.env"; set +a
 
@@ -39,18 +40,17 @@ prompt="${1:-Describe what you see in this image, briefly.}"
 
 base="${ABBES_ORCH_URL:-http://127.0.0.1:18790}"
 
-latest=""
+shot=""
 if $photo; then
     dir="${ABBES_DATA_DIR:-/var/lib/abbes}/camera"
     mkdir -p "$dir"
-    latest="$dir/latest.jpg"
-    shot="$dir/look-$(date +%Y%m%d-%H%M%S).jpg"
+    shot="$dir/look-$(date +%Y%m%d-%H%M%S)-$$.jpg"
     if ! curl -sS --fail --max-time 30 "$base/vision/snapshot" -o "$shot"; then
         rm -f "$shot"
         echo "could not fetch a frame; is the camera running?" >&2
         exit 1
     fi
-    cp -f "$shot" "$latest"
+    cp -f "$shot" "$dir/latest.jpg"
     ls -1t "$dir"/look-*.jpg 2>/dev/null | tail -n +21 | xargs -r rm -f
 fi
 
@@ -82,5 +82,5 @@ if ! $answer_ok; then
 fi
 
 if $photo; then
-    printf '\nTo attach the picture, copy this line into your reply EXACTLY as printed, on its own line. Do not change the filename:\nMEDIA:%s\n' "$latest"
+    printf '\nTo attach the picture, copy this line into your reply EXACTLY as printed, on its own line. Do not change or reuse a filename:\nMEDIA:%s\n' "$shot"
 fi

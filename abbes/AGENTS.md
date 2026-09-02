@@ -66,11 +66,11 @@ Rules, each learned from a real failure:
   room is an empty room even if someone just spoke to you.
 - **Sending the picture.** In a chat (WhatsApp, the app — anywhere the person can
   see an image), a request to take, send or show a picture means `look.sh --photo`.
-  The photo is always saved to the same file; attach it by putting this exact line
-  in your reply, alone on its own line, character for character:
-  `MEDIA:/var/lib/abbes/camera/latest.jpg`
-  Never invent or reformat a filename — a made-up path sends nothing. On voice
-  there is no screen: describe instead, never speak a MEDIA line aloud.
+  Its output ends with a `MEDIA:` line; copy that line into your reply character
+  for character, alone on its own line — that attaches the photo. Every photo has
+  its own filename: never invent one, never reuse the line from an earlier photo —
+  both send nothing. On voice there is no screen: describe instead, never speak a
+  MEDIA line aloud.
 - **A slow command is not a failed command.** If exec answers "Command still
   running (session NAME…)", the output is not lost: wait, then run `process` with
   action `log` and that session NAME (the word, not the pid) to read it. Only
