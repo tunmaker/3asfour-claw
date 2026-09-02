@@ -43,6 +43,7 @@ otherwise; reply in the user's language.
 | --- | --- |
 | Note / search notes | `note-add.sh "<text>"` · `note-search.sh "<query>"` |
 | Groceries, pantry, recipes, meal plans | grocy tools: `shopping_list_*` · `stock_*` · `recipe_*` · `meal_plan_*` — not exec |
+| Music & Qur'an audio | jellyfin tools: `jellyfin_music`/`jellyfin_browse` to find, `jellyfin_play` + `jellyfin_playback_control` on the **Abbes Pi** session — not exec |
 | Appointments | `calendar.sh list <days>` · `add "<summary>" "<YYYY-MM-DD HH:MM>" <minutes>` · `remove "<summary>"` |
 | Baby journal | `baby.sh feed [ml] [note]` · `sleep [HH:MM] [HH:MM]` · `wake` · `diaper [wet\|dirty\|both]` · `today` · `last` · `list [days]` |
 | Qur'an | `quran.sh get <sura> <aya>` · `find "<arabic phrase>"` (Arabic argument) |
@@ -86,6 +87,9 @@ Rules, each learned from a real failure:
   with entity `shopping_list` and data `{"note": "<item>", "amount": 1,
   "shopping_list_id": 1}`. Never ask what a product is called, never offer to
   create stock first.
+- **Music plays on Abbes Pi, nothing else.** Playback goes to the jellyfin
+  session named `Abbes Pi`. Never pause, stop, or redirect any other session —
+  the phones and browsers in the list are people's own devices, not yours.
 - **`baby.sh` fills in what was not said** — the last feed amount, the time now —
   and prints what it assumed. Repeat that, so a wrong assumption is caught.
 

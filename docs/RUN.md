@@ -69,6 +69,7 @@ to run, not a boundary -- see the note on exec policy below.
 |---|---|
 | `note-add.sh`, `note-search.sh` | Notes in the vault |
 | grocy (MCP) | Grocery list and pantry, served by the Grocy instance on this host. List-building only — no purchasing capability |
+| jellyfin (MCP) | Music and Qur'an playback from the household Jellyfin server onto the Pi speaker (the `Abbes Pi` player). Search, browse, and playback control only |
 | `calendar.sh` | CalDAV read and write |
 | `baby.sh` | Baby journal: feeds, sleep, diapers, notes. Fills in what was not said and prints what it assumed |
 | `quran.sh` | Read-only retrieval from a local Qur'an text |
@@ -194,3 +195,26 @@ openclaw memory index --force # after editing workspace documents
 
 Change configuration with `openclaw config patch --stdin --dry-run` first; do not
 hand-edit `openclaw.json` while the gateway is running.
+
+## 9. MCP servers (host-only setup)
+
+Three MCP servers are registered in `mcp.servers` with `openclaw mcp add`; none
+of it lives in a deploy script, so it is recorded here.
+
+- **grocy** — `~/.venvs/grocy-mcp/bin/grocy-mcp` (stdio). Grocy itself runs on
+  this host: nginx + PHP 8.5-FPM (Sury PPA) serving `/var/www/grocy`, SQLite in
+  `/var/www/grocy/data/`. API key in `~/.config/grocy-mcp/config.toml` (mode
+  600). Tool set trimmed with `openclaw mcp configure grocy --include ...`.
+- **jellyfin** — `~/.local/bin/jellyfin-mcp` (stdio, official binary),
+  `--disable-destructive --toolsets discovery,media,playback`. `JELLYFIN_URL`
+  and `JELLYFIN_API_KEY` are set as env on the server entry. The library server
+  is a separate host (`<jellyfin-host>:8096`, plain HTTP on the LAN).
+- Playback lands on the Pi: `jellyfin-mpv-shim` (venv) runs as the user service
+  `jellyfin-mpv-shim` on **voicepi**, registered in Jellyfin as the player
+  **Abbes Pi**. It is logged in as a dedicated non-admin Jellyfin user `abbes`
+  (not a household member's account); `~/.config/jellyfin-mpv-shim/mpv.conf`
+  pins `vo=null` (headless) and the analog output sink, the same speaker the
+  voice path uses.
+
+After changing any server's config: `openclaw mcp reload`, then restart the
+gateway. `openclaw mcp probe <name>` lists the live tool count.
