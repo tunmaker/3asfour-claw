@@ -350,7 +350,8 @@ async function onSceneChange({ present, caption }) {
  *
  * id_slot keeps a 1024-token image out of the voice session's slot, which would
  * otherwise cost that session its cached prefix and turn a 0.09s prefill into
- * a 9s one on the next thing anybody says out loud.
+ * a 9s one on the next thing anybody says out loud. Slot 1 is the shared
+ * everything-but-voice slot; evicting main's prefix is an accepted cost there.
  */
 async function askQwenAboutImage(jpeg, prompt) {
   if (!QWEN_VISION_URL) throw new Error("VISION_QWEN_URL is not set");
@@ -362,7 +363,7 @@ async function askQwenAboutImage(jpeg, prompt) {
     },
     body: JSON.stringify({
       model: "qwen3.5-9b-q8-vision",
-      id_slot: 2,
+      id_slot: 1,
       messages: [{
         role: "user",
         content: [
@@ -617,7 +618,21 @@ async function warmup() {
   log(`warmed http stack in ${Date.now() - t}ms`);
 }
 
+// The default model moved to the shared slot-1 lane; the voice session is the
+// one thing that must stay on slot 0, so pin its model explicitly. sessions.patch
+// persists on the session entry and survives gateway restarts, but not a session
+// reset, hence on every orchestrator start rather than once ever.
+async function pinVoiceModel() {
+  try {
+    await gw.call("sessions.patch", { key: SESSION_KEY, model: "llamacpp/qwen3.5-9b-q8" });
+    log("voice session pinned to llamacpp/qwen3.5-9b-q8 (slot 0)");
+  } catch (e) {
+    log("could not pin the voice model:", e.message);
+  }
+}
+
 gw.connect()
+  .then(pinVoiceModel)
   .then(warmup)
   .then(() => server.listen(PORT, "127.0.0.1",
         () => log(`orchestrator listening on 127.0.0.1:${PORT}, session "${SESSION_KEY}"`)))

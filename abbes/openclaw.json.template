@@ -3,7 +3,7 @@
     "defaults": {
       "workspace": "/home/openclaw/.openclaw/workspace",
       "model": {
-        "primary": "llamacpp/qwen3.5-9b-q8",
+        "primary": "llamacpp/qwen3.5-9b-q8-auto",
         "fallbacks": []
       },
       "models": {
@@ -27,7 +27,7 @@
           "alias": "qwen-vision",
           "params": {
             "extra_body": {
-              "id_slot": 2
+              "id_slot": 1
             }
           }
         }
@@ -130,8 +130,8 @@
               "cacheRead": 0,
               "cacheWrite": 0
             },
-            "contextWindow": 131072,
-            "contextTokens": 98304,
+            "contextWindow": 65536,
+            "contextTokens": 16384,
             "maxTokens": 8192,
             "params": {
               "chat_template_kwargs": {
@@ -153,8 +153,8 @@
               "cacheRead": 0,
               "cacheWrite": 0
             },
-            "contextWindow": 131072,
-            "contextTokens": 98304,
+            "contextWindow": 65536,
+            "contextTokens": 57344,
             "maxTokens": 8192,
             "params": {
               "chat_template_kwargs": {
@@ -176,8 +176,8 @@
               "cacheRead": 0,
               "cacheWrite": 0
             },
-            "contextWindow": 131072,
-            "contextTokens": 98304,
+            "contextWindow": 65536,
+            "contextTokens": 57344,
             "maxTokens": 8192,
             "params": {
               "chat_template_kwargs": {
