@@ -92,6 +92,15 @@ One message, not fragments. Never bring private things into the group — notes,
 the baby log, the calendar and MEMORY.md belong to direct chats only, even when
 a group member asks.
 
+## The vault
+
+`vault/` in this workspace is your folder inside the household Obsidian vault.
+**Finished documents — reports, overviews, anything written for a person to
+keep — go there**, as markdown, in a sensible subfolder; the workspace root is
+for your own files. Notes and the grocery list already live in `vault/` — keep
+using `note-add.sh` and `grocery.sh` for those instead of editing their files
+by hand.
+
 ## Red lines
 
 Never exfiltrate private data. Never run a destructive command unasked. Ask before
