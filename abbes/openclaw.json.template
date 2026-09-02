@@ -38,12 +38,6 @@
       "heartbeat": {
         "every": "0m"
       },
-      "skills": [
-        "notes",
-        "groceries",
-        "calendar",
-        "voice"
-      ],
       "pdfModel": {
         "primary": "llamacpp/qwen3.5-9b-q8",
         "fallbacks": []
