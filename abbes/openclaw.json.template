@@ -125,8 +125,8 @@
               "cacheWrite": 0
             },
             "contextWindow": 65536,
-            "contextTokens": 16384,
-            "maxTokens": 1024,
+            "contextTokens": 65536,
+            "maxTokens": 2048,
             "params": {
               "chat_template_kwargs": {
                 "enable_thinking": false
