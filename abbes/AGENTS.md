@@ -42,7 +42,7 @@ otherwise; reply in the user's language.
 | Need | Command |
 | --- | --- |
 | Note / search notes | `note-add.sh "<text>"` · `note-search.sh "<query>"` |
-| Groceries & pantry | grocy tools: `shopping_list_view` · `shopping_list_add` · `shopping_list_remove` · `stock_overview` · `stock_expiring` — not exec |
+| Groceries, pantry, recipes, meal plans | grocy tools: `shopping_list_*` · `stock_*` · `recipe_*` · `meal_plan_*` — not exec |
 | Appointments | `calendar.sh list <days>` · `add "<summary>" "<YYYY-MM-DD HH:MM>" <minutes>` · `remove "<summary>"` |
 | Baby journal | `baby.sh feed [ml] [note]` · `sleep [HH:MM] [HH:MM]` · `wake` · `diaper [wet\|dirty\|both]` · `today` · `last` · `list [days]` |
 | Qur'an | `quran.sh get <sura> <aya>` · `find "<arabic phrase>"` (Arabic argument) |

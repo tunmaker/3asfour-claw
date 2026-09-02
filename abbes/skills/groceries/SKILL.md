@@ -1,6 +1,6 @@
 ---
 name: groceries
-description: "Grocery list and pantry via the grocy tools. List-building only, no purchasing authority."
+description: "Grocery list, pantry, recipes and meal plans via the grocy tools. List-building only, no purchasing authority."
 metadata:
   {
     "openclaw":
@@ -10,7 +10,7 @@ metadata:
   }
 ---
 
-# Groceries & pantry
+# Groceries, pantry, recipes, meal plans
 
 The household runs Grocy. Use the `grocy` MCP tools — never exec, never edit
 files:
@@ -22,6 +22,13 @@ files:
 - `stock_overview` / `stock_search` / `stock_expiring` — what the pantry holds
   and what is about to expire.
 - `stock_add` / `stock_consume` — only when told something was bought or used.
+- `recipes_list` / `recipe_details` / `recipe_fulfillment` — what can be cooked
+  from what is in stock. `recipe_add_to_shopping` puts the missing ingredients
+  on the list; `recipe_consume` deducts them after cooking, only when told the
+  dish was actually made.
+- `meal_plan_list` / `meal_plan_summary` / `meal_plan_add` / `meal_plan_remove`
+  — the week's plan; `meal_plan_shopping` adds a planned day's needs to the
+  list.
 
 Items in English, metric quantities, prices in EUR. Most items are not in the
 product catalog — add them as free-text notes with `entity_create`:
