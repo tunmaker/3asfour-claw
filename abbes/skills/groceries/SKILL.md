@@ -1,32 +1,41 @@
 ---
 name: groceries
-description: "Maintain a running grocery list. List-building only, no purchasing authority."
+description: "Grocery list and pantry via the grocy tools. List-building only, no purchasing authority."
 metadata:
   {
     "openclaw":
       {
         "emoji": "🛒",
-        "requires": { "bins": ["grocery.sh"] },
       },
   }
 ---
 
-# Groceries
+# Groceries & pantry
 
-```bash
-/home/openclaw/bin/grocery.sh list
-/home/openclaw/bin/grocery.sh add "milk 1L"
-/home/openclaw/bin/grocery.sh done "milk"      # check off
-/home/openclaw/bin/grocery.sh remove "milk"    # delete
-/home/openclaw/bin/grocery.sh clear            # drop everything checked off
-```
+The household runs Grocy. Use the `grocy` MCP tools — never exec, never edit
+files:
 
-Items in English, metric quantities, prices in EUR. Check the list before adding:
-`milk` already there means do not add it again.
+- `shopping_list_view` — always check before adding; `milk` already there
+  means do not add it again.
+- `shopping_list_add` / `shopping_list_remove` / `shopping_list_set_amount` /
+  `shopping_list_set_note` / `shopping_list_clear`
+- `stock_overview` / `stock_search` / `stock_expiring` — what the pantry holds
+  and what is about to expire.
+- `stock_add` / `stock_consume` — only when told something was bought or used.
+
+Items in English, metric quantities, prices in EUR. Most items are not in the
+product catalog — add them as free-text notes with `entity_create`:
+
+    entity: shopping_list
+    data: {"note": "tomatoes", "amount": 1, "shopping_list_id": 1}
+
+Use `shopping_list_add` only when the product already exists by that name; if
+it answers "not found", fall back to the note row above — never ask the person
+what the product is called.
 
 The dietary rules in `USER.md` are mandatory for every suggestion and
 substitution. Swap and say what you swapped; never silently omit; mark a doubtful
 product `(verify)`.
 
 This builds a list. It has **no purchasing or payment authority**: never order,
-buy, reserve or pay, and say so if asked. Only the script writes this file.
+buy, reserve or pay, and say so if asked.

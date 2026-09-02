@@ -190,7 +190,7 @@ between sentences.
 
 ## Phase 3 — write-once guards
 
-`bin/_dedupe.sh`, sourced by `grocery.sh`, `baby-log.sh` and `calendar.sh`.
+`bin/_dedupe.sh`, sourced by `baby.sh` and `calendar.sh`.
 
 The model composes these command lines, so there is no turn id to thread through
 from the orchestrator. The guard is content-based instead: the same verb with the

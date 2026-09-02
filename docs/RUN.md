@@ -68,7 +68,7 @@ to run, not a boundary -- see the note on exec policy below.
 | Script | Purpose |
 |---|---|
 | `note-add.sh`, `note-search.sh` | Notes in the vault |
-| `grocery.sh` | Grocery list. List-building only — no purchasing capability |
+| grocy (MCP) | Grocery list and pantry, served by the Grocy instance on this host. List-building only — no purchasing capability |
 | `calendar.sh` | CalDAV read and write |
 | `baby.sh` | Baby journal: feeds, sleep, diapers, notes. Fills in what was not said and prints what it assumed |
 | `quran.sh` | Read-only retrieval from a local Qur'an text |
@@ -113,7 +113,8 @@ achieve:
 
 | Location | Contents |
 |---|---|
-| `$ABBES_VAULT_DIR` | Notes and grocery list — the single source of truth |
+| `$ABBES_VAULT_DIR` | Notes — the single source of truth |
+| `/var/www/grocy/data/` | Grocy database (groceries and pantry) |
 | `$ABBES_DATA_DIR/babylog/journal.jsonl` | Baby journal, append-only, one event per line |
 | `$ABBES_DATA_DIR/reference/quran/` | Qur'an text, if installed |
 | `~/.openclaw/workspace/` | System prompt, identity, memory |

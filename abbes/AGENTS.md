@@ -42,7 +42,7 @@ otherwise; reply in the user's language.
 | Need | Command |
 | --- | --- |
 | Note / search notes | `note-add.sh "<text>"` · `note-search.sh "<query>"` |
-| Groceries | `grocery.sh list` · `add "<item>"` · `done "<item>"` · `remove "<item>"` |
+| Groceries & pantry | grocy tools: `shopping_list_view` · `shopping_list_add` · `shopping_list_remove` · `stock_overview` · `stock_expiring` — not exec |
 | Appointments | `calendar.sh list <days>` · `add "<summary>" "<YYYY-MM-DD HH:MM>" <minutes>` · `remove "<summary>"` |
 | Baby journal | `baby.sh feed [ml] [note]` · `sleep [HH:MM] [HH:MM]` · `wake` · `diaper [wet\|dirty\|both]` · `today` · `last` · `list [days]` |
 | Qur'an | `quran.sh get <sura> <aya>` · `find "<arabic phrase>"` (Arabic argument) |
@@ -81,6 +81,11 @@ Rules, each learned from a real failure:
 - **"وقت العشاء" is the isha prayer, not dinner.** Any of the six names above
   with "وقت" or "صلاة" means `prayer.sh today`; the calendar has nothing to do
   with it.
+- **Grocery items are note rows.** `shopping_list_add` only works for products
+  already in the catalog — most are not. To add an item, use `entity_create`
+  with entity `shopping_list` and data `{"note": "<item>", "amount": 1,
+  "shopping_list_id": 1}`. Never ask what a product is called, never offer to
+  create stock first.
 - **`baby.sh` fills in what was not said** — the last feed amount, the time now —
   and prints what it assumed. Repeat that, so a wrong assumption is caught.
 
@@ -108,9 +113,8 @@ a group member asks.
 `vault/` in this workspace is your folder inside the household Obsidian vault.
 **Finished documents — reports, overviews, anything written for a person to
 keep — go there**, as markdown, in a sensible subfolder; the workspace root is
-for your own files. Notes and the grocery list already live in `vault/` — keep
-using `note-add.sh` and `grocery.sh` for those instead of editing their files
-by hand.
+for your own files. Notes already live in `vault/` — keep using `note-add.sh`
+for those instead of editing their files by hand.
 
 ## Red lines
 
