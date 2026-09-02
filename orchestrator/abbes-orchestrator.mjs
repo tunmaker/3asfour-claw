@@ -30,7 +30,9 @@ const GW_URL      = process.env.GW_URL      || "ws://127.0.0.1:18789";
 const ENV_FILE    = process.env.OPENCLAW_ENV || `${process.env.HOME}/.openclaw/openclaw.env`;
 const STT_URL     = process.env.STT_URL     || required("STT_URL");
 const TTS_URL     = process.env.TTS_URL     || required("TTS_URL");
-const SESSION_KEY = process.env.ABBES_SESSION_KEY || "voice";
+// Agent-prefixed: with more than one agent configured, the gateway rejects
+// bare session keys ("voice") as ownerless.
+const SESSION_KEY = process.env.ABBES_SESSION_KEY || "agent:main:voice";
 const VOICE       = process.env.PIPER_VOICE || "ar_JO-kareem-medium";
 const STT_TIMEOUT = +(process.env.STT_TIMEOUT_MS || 60000);
 const TTS_TIMEOUT = +(process.env.TTS_TIMEOUT_MS || 15000);
@@ -501,6 +503,19 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(502, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: e.message }));
     }
+    return;
+  }
+
+  // The newest frame as a plain JPEG, so a tool can save it and attach the
+  // actual picture to a chat reply instead of only describing it.
+  if (req.method === "GET" && url.pathname === "/vision/snapshot") {
+    if (!vision || !vision.lastFrame) {
+      res.writeHead(503, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "no frame yet; is the camera running?" }));
+      return;
+    }
+    res.writeHead(200, { "content-type": "image/jpeg", "x-frame-age-ms": String(Date.now() - vision.lastFrameAt) });
+    res.end(vision.lastFrame);
     return;
   }
 

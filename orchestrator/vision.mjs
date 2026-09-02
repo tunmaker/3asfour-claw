@@ -102,6 +102,7 @@ export class VisionGate {
     this.isBusy = isBusy;
 
     this.lastFrame = null;
+    this.lastFrameAt = 0;
     this.lastCaption = null;
     this.lastCaptionAt = 0;
     // null until the first look, so the first answer is not reported as an
@@ -129,6 +130,7 @@ export class VisionGate {
     this.stats.frames++;
     const score = frameDifference(jpeg, this.lastFrame);
     this.lastFrame = jpeg;
+    this.lastFrameAt = Date.now();
 
     // Size can stay flat across a real change, so look anyway if it has been
     // long enough. Tier 1 saves work; it is not allowed to blind the gate.
