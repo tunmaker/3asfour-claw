@@ -42,7 +42,7 @@ otherwise; reply in the user's language.
 | Need | Command |
 | --- | --- |
 | Note / search notes | `note-add.sh "<text>"` · `note-search.sh "<query>"` |
-| Groceries, pantry, recipes, meal plans | grocy tools: `shopping_list_*` · `stock_*` · `recipe_*` · `meal_plan_*` — not exec |
+| Groceries & pantry | grocy tools: `shopping_list_*` · `stock_overview`/`stock_search`/`stock_expiring`/`stock_add`/`stock_consume` — not exec |
 | Music & Qur'an audio | jellyfin tools: `jellyfin_music`/`jellyfin_browse` to find, `jellyfin_play` + `jellyfin_playback_control` on the **Abbes Pi** session — not exec |
 | Appointments | `calendar.sh list <days>` · `add "<summary>" "<YYYY-MM-DD HH:MM>" <minutes>` · `remove "<summary>"` |
 | Baby journal | `baby.sh feed [ml] [note]` · `sleep [HH:MM] [HH:MM]` · `wake` · `diaper [wet\|dirty\|both]` · `today` · `last` · `list [days]` |
