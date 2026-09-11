@@ -401,7 +401,7 @@ def log_turn(transcript, reply):
     path.chmod(0o600)
 
 
-def streamed_turn(url, wav_path):
+def streamed_turn(url, wav_path, stream):
     """One turn through the orchestrator: recording in, speech out as it renders.
 
     Returns (status, carried). Status is "handled" when the turn ran, "empty"
