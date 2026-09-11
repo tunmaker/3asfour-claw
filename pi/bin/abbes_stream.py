@@ -14,6 +14,7 @@ import json
 import struct
 import subprocess
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -85,27 +86,45 @@ class PlaybackStream:
                 self.proc = None
                 self.fmt = None
 
-    def close(self):
-        """Close the input and wait for the buffered audio to actually drain."""
+    def close(self, should_stop=None, poll=0.1):
+        """Close the input and wait for the buffered audio to actually drain.
+
+        Draining is where most of a reply is actually heard: chunks are queued
+        far faster than realtime, so by the last frame the speaker still has
+        seconds left to play. Polling `should_stop` through the wait is what lets
+        an interruption land in the middle of a sentence instead of after it.
+        Returns True if it was cut short.
+        """
         with self._lock:
             proc, self.proc, self.fmt = self.proc, None, None
         if not proc:
-            return
+            return False
         try:
             proc.stdin.close()
         except Exception:
             pass
-        try:
-            proc.wait(timeout=60)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            try:
+                proc.wait(timeout=poll)
+                return False
+            except subprocess.TimeoutExpired:
+                pass
+            if should_stop and should_stop():
+                proc.kill()
+                return True
+        proc.kill()
+        return False
 
 
 def stream_turn(url, wav_path, player, timeout=180, trigger_words="",
-                on_transcript=None, log=lambda *a: None):
+                on_transcript=None, should_stop=None, log=lambda *a: None):
     """POST the recording, play each sentence as it arrives.
 
-    Returns the end frame: {"reply": str, "marks": {...}}.
+    Returns the end frame: {"reply": str, "marks": {...}}, with "interrupted"
+    set if the reply was cut short. Hanging up mid-reply is also how the model is
+    stopped: the orchestrator aborts the run when this connection closes, so an
+    interruption costs no further tokens and leaves no half-turn generating.
     """
     with open(wav_path, "rb") as fh:
         body = fh.read()
@@ -123,8 +142,12 @@ def stream_turn(url, wav_path, player, timeout=180, trigger_words="",
 
     result = {"reply": "", "marks": {}}
     chunks = 0
+    interrupted = False
     try:
         while True:
+            if should_stop and should_stop():
+                interrupted = True
+                break
             head = _read_exactly(resp, 5)
             if head is None:
                 break
@@ -147,8 +170,11 @@ def stream_turn(url, wav_path, player, timeout=180, trigger_words="",
     finally:
         resp.close()
 
-    if chunks:
-        player.close()
+    if interrupted:
+        player.flush()
+    elif chunks and player.close(should_stop=should_stop):
+        interrupted = True
+    result["interrupted"] = interrupted
     return result
 
 

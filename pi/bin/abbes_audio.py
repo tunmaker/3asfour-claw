@@ -1,29 +1,26 @@
-"""One microphone stream, shared by the wake detector and the recorder.
+"""One microphone stream, shared by the wake detector, the recorder and barge-in.
 
 Opening parecord per turn would race the always-on detector for the device, so
 the stream is opened once and drained by a background thread. Audio lives in
 memory only: the ring buffer is bounded and nothing here writes to disk.
 
-A dead microphone does not announce itself. When the webcam this mic belongs to
-wedged, parecord stayed alive and delivered nothing at all for 38 minutes: the
-loop sat in read() seeing an unusually quiet room, logged not one line, and
-answered no one. So silence is timed. Past DEAD_SECS with the stream unmuted,
-the mic is gone rather than quiet, and saying so lets systemd restart the loop
-instead of leaving it deaf and looking healthy.
+The microphone is never muted. It used to be, across every moment Abbes spoke,
+because the speaker and the microphone were separate devices in one room and the
+microphone heard the reply. They are now one device -- a Jabra SPEAK 510 -- which
+cancels its own output in hardware: a tone loud enough to fill the room measures
+-48.9 dBFS at this microphone, below the room's own noise floor of -45.7. The
+microphone cannot hear the speaker, so there is nothing to mute, and holding it
+open is what makes interrupting Abbes mid-sentence possible.
 
-Restarting alone is not a repair, and one night proved it: the device wedged
-while the camera was healthy, so the poller's reset never fired, and the loop
-crash-restarted 363 times in a row -- MicGone at 30s, restart at 5s, forever.
-A fresh parecord on a wedged bus is just as deaf as the old one. So the MicGone
-exit path may run the USB reset itself, rate-limited through a marker file so a
-genuinely unplugged microphone does not get the bus reset every 35 seconds.
+A dead microphone does not announce itself: parecord stays alive and delivers
+nothing, and the loop sits in read() seeing an unusually quiet room. So silence
+is timed. Past DEAD_SECS the mic is gone rather than quiet, and saying so lets
+systemd restart the loop instead of leaving it deaf and looking healthy.
 """
 
 import array
 import collections
 import math
-import os
-import pathlib
 import subprocess
 import threading
 import time
@@ -40,39 +37,6 @@ DEAD_SECS = 30.0
 
 class MicGone(Exception):
     pass
-
-
-def attempt_mic_repair(env=os.environ, run=None, log=print, clock=time.time):
-    """One rate-limited USB reset on the way down. True if a reset was run."""
-    script = pathlib.Path(env.get("MIC_RESET_CMD", os.path.expanduser("~/bin/abbes-camera-reset.sh")))
-    if not script.is_file():
-        log(f"mic repair: no reset script at {script}")
-        return False
-    min_secs = int(env.get("MIC_RESET_MIN_SECS", "600"))
-    marker = pathlib.Path(env.get("XDG_RUNTIME_DIR", "/tmp")) / "abbes-mic-reset"
-    try:
-        age = clock() - marker.stat().st_mtime
-        if age < min_secs:
-            log(f"mic repair: last reset {age:.0f}s ago, waiting out {min_secs}s")
-            return False
-    except OSError:
-        pass
-    marker.touch()
-    log(f"mic repair: running {script}")
-    try:
-        r = (run or _run_reset)(script)
-    except Exception as e:
-        log(f"mic repair: reset failed ({e})")
-        return False
-    for line in r.splitlines():
-        if line.strip():
-            log(f"mic repair: {line.strip()}")
-    return True
-
-
-def _run_reset(script):
-    r = subprocess.run([str(script)], capture_output=True, text=True, timeout=60)
-    return r.stdout + r.stderr
 
 
 def rms_dbfs(buf):
@@ -110,7 +74,6 @@ class MicStream:
         self._ring = collections.deque(maxlen=self._chunks(preroll_secs))
         self._queue = collections.deque(maxlen=self._chunks(backlog_secs))
         self._cond = threading.Condition()
-        self._muted = False
         self._alive = True
         self._dead_secs = dead_secs
         self._clock = clock
@@ -131,13 +94,12 @@ class MicStream:
                     self._cond.notify_all()
                     return
                 self._last_chunk = self._clock()
-                if not self._muted:
-                    self._queue.append(buf)
-                    self._ring.append(buf)
+                self._queue.append(buf)
+                self._ring.append(buf)
                 self._cond.notify()
 
     def read(self, timeout=1.0):
-        """Next chunk, or None if nothing arrived (muted, or a quiet timeout)."""
+        """Next chunk, or None if nothing arrived within the timeout."""
         with self._cond:
             if not self._queue and self._alive:
                 self._cond.wait(timeout)
@@ -150,8 +112,6 @@ class MicStream:
 
     def _check_alive(self):
         """Silence is only ever silence for so long. Caller holds the lock."""
-        if self._muted:
-            return
         quiet_for = self._clock() - self._last_chunk
         if quiet_for >= self._dead_secs:
             self._alive = False
@@ -162,19 +122,11 @@ class MicStream:
         with self._cond:
             return b"".join(self._ring)
 
-    def mute(self):
+    def drain(self):
+        """Drop whatever is buffered, so the next read starts from now."""
         with self._cond:
-            self._muted = True
             self._queue.clear()
             self._ring.clear()
-
-    def unmute(self):
-        with self._cond:
-            self._muted = False
-            self._queue.clear()
-            self._ring.clear()
-            # A long mute is not evidence about the device.
-            self._last_chunk = self._clock()
 
     def close(self):
         self._proc.terminate()
@@ -182,3 +134,73 @@ class MicStream:
             self._proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             self._proc.kill()
+
+
+class BargeIn:
+    """Watches for someone talking over Abbes, and keeps what they said.
+
+    Only possible because this microphone hears nothing of the speaker beside it
+    (see the module docstring), so anything clearing the threshold while Abbes is
+    talking is a person, not the reply. Used as a context manager around
+    playback; `fired` says whether to stop.
+
+    The audio from the moment speech began is kept. Interrupting is then one
+    movement -- Abbes stops and answers what you said -- instead of Abbes
+    stopping and asking you to say it again, which is what makes an interruption
+    feel like being heard rather than like hitting a button.
+    """
+
+    def __init__(self, stream, threshold_dbfs=-30.0, min_speech_secs=0.35,
+                 log=lambda *a: None):
+        self._stream = stream
+        self._threshold = threshold_dbfs
+        self._min_chunks = max(1, int(min_speech_secs * 1000 / CHUNK_MS))
+        self._log = log
+        self._fired = threading.Event()
+        self._stop = threading.Event()
+        self._speech = bytearray()
+        self._thread = None
+
+    def __enter__(self):
+        self._stream.drain()
+        self._thread = threading.Thread(target=self._watch, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2.0)
+        return False
+
+    @property
+    def fired(self):
+        return self._fired.is_set()
+
+    def speech(self):
+        return bytes(self._speech)
+
+    def _watch(self):
+        run = bytearray()
+        voiced = 0
+        while not self._stop.is_set():
+            try:
+                buf = self._stream.read(timeout=0.2)
+            except MicGone:
+                return
+            if buf is None:
+                continue
+            if self._fired.is_set():
+                self._speech += buf
+                continue
+            level = rms_dbfs(buf)
+            if level > self._threshold:
+                run += buf
+                voiced += 1
+                if voiced >= self._min_chunks:
+                    self._speech = run
+                    self._fired.set()
+                    self._log(f"barge-in: you started speaking ({level:.0f} dBFS), stopping")
+            else:
+                run = bytearray()
+                voiced = 0

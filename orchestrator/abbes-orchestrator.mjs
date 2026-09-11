@@ -636,6 +636,18 @@ const server = http.createServer(async (req, res) => {
     // Length-prefixed frames so the client can play each without waiting.
     res.writeHead(200, { "content-type": "application/octet-stream",
                          "cache-control": "no-store", "x-abbes-stream": "1" });
+
+    // Hanging up mid-reply is how the Pi says you interrupted. Abort the run
+    // rather than letting the model finish an answer nobody is listening to.
+    let hungUp = false;
+    const onHangUp = () => {
+      if (hungUp || res.writableEnded) return;
+      hungUp = true;
+      log("client hung up mid-reply; aborting the turn");
+      gw.abort(SESSION_KEY);
+    };
+    req.on("close", onHangUp);
+
     const out = await runTurn(wav, {
       triggerWords,
       onTranscript: (t) => {

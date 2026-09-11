@@ -11,20 +11,18 @@ reset *and* a uvcvideo reload. So there is exactly one invocation here, it never
 touches the format beyond MJPG at the default rate, and a failed grab is
 routine rather than an error.
 
-The camera and the microphone are the same USB device, and that is the whole
-reason this file is careful. Polling at seconds rather than milliseconds was
-measured not to disturb capture -- over twenty grabs. Over ninety minutes it
-wedged the device anyway, and the microphone went with it: parecord stayed
-alive delivering nothing, the wake word never fired, and the assistant was
-silently deaf until the bus was reset by hand.
+This file used to be careful for a second reason: the camera and the microphone
+were two functions of one USB device, so polling competed with hearing and a
+wedge took the microphone with it -- parecord stayed alive delivering nothing,
+the wake word never fired, and the assistant was silently deaf for ninety
+minutes until the bus was reset by hand.
 
-The earlier reasoning here was that a reset would take the microphone down with
-it, so the poller should leave the bus alone and let a human run the script.
-That was backwards on both halves. Polling a wedged device every three seconds
-is itself a continuous stream of failing control transfers, which is what keeps
-the microphone starved; and the reset does not cost the microphone, it is what
-brings it back -- measured, zero frames captured before, 5.9s of clean audio
-after. So a wedge now backs off hard and then repairs itself.
+The microphone is now in the speakerphone, a different device entirely, so a
+wedged camera is a lost camera and nothing more. The poller no longer resets the
+bus on its own: doing so would drop a *working* microphone to recover a camera.
+It backs off instead, and a wedge that does not clear is repaired by hand with
+`abbes-camera-reset.sh`. The `repair` hook is left here for a host where the two
+do share a device again.
 
 Stdlib only, like the rest of the Pi.
 """
@@ -113,7 +111,7 @@ class CameraPoller:
                 if self.consecutive_failures == self.wedge_after:
                     self.log(f"camera: {self.wedge_after} grabs failed in a row; the "
                              f"device is wedged. Backing off to {self.wedge_interval:g}s "
-                             f"so it stops starving the microphone.")
+                             f"until it comes back.")
                 if self.wedged:
                     self._try_repair()
             else:
@@ -156,22 +154,6 @@ class CameraPoller:
         except (urllib.error.URLError, OSError, TimeoutError) as e:
             # The orchestrator being down must not stop the poll; it comes back.
             self.log(f"camera: post failed ({e})")
-
-
-def usb_reset(script, timeout=60, log=lambda *a: None):
-    """A callable that runs the reset script. None if it is not installed."""
-    path = pathlib.Path(script).expanduser()
-    if not path.is_file():
-        return None
-
-    def run():
-        r = subprocess.run([str(path)], capture_output=True, text=True, timeout=timeout)
-        for line in (r.stdout + r.stderr).splitlines():
-            if line.strip():
-                log(f"camera: {line.strip()}")
-        return r.returncode == 0
-
-    return run
 
 
 def frame_url(orchestrator_url):

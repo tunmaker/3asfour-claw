@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """Voice loop for Abbes: wake word -> record -> transcribe -> ask -> speak."""
 
-import array
-import contextlib
 import json
-import math
 import os
 import re
 import pathlib
@@ -23,9 +20,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import abbes_match
 import abbes_wake
 from abbes_announce import AnnounceListener, announce_url
-from abbes_camera import Camera, CameraPoller, frame_url, usb_reset
+from abbes_camera import Camera, CameraPoller, frame_url
 from abbes_satellite import SatelliteWake, wake_url
-from abbes_audio import RATE, MicGone, MicStream, attempt_mic_repair, rms_dbfs, write_tone
+from abbes_audio import RATE, BargeIn, MicGone, MicStream, rms_dbfs, write_tone
 from abbes_config import cfg, flag, listing
 from abbes_stream import PlaybackStream, stream_turn
 
@@ -40,8 +37,8 @@ PROMPT_PHRASE = cfg("PROMPT_PHRASE", "نعم؟")
 RECONNECT_PHRASE = cfg("RECONNECT_PHRASE", "عاد الاتصال")
 
 
-# Clear only while a turn is in flight, so the camera's USB reset -- which drops
-# the microphone for a second -- can wait for one to finish.
+# Clear only while a turn is in flight, so background work that disturbs the
+# devices can wait for one to finish.
 IDLE = threading.Event()
 
 
@@ -49,23 +46,12 @@ class Unreachable(Exception):
     pass
 
 
-# Set once the wake listener exists. Everything that compares audio against a
-# level reads it from here, so the gate, the end-of-speech detector and the
-# trimmer all move together when the room changes -- which it does by 12 dB
-# between 3am and 4pm on this microphone.
-ROOM = {"floor": None}
-
-
-def threshold_for(name, default, above_floor):
-    """A threshold, preferring one derived from the measured room.
-
-    Falls back to the configured absolute value when the floor is not known yet
-    (the first seconds after start) or when adaptation is switched off.
-    """
-    floor = ROOM.get("floor")
-    if floor is None:
-        return cfg(name, default, float)
-    return floor + above_floor
+def barge_in(stream):
+    """A watcher for the person interrupting, around anything Abbes says."""
+    return BargeIn(stream,
+                   threshold_dbfs=cfg("BARGE_IN_DBFS", "-30", float),
+                   min_speech_secs=cfg("BARGE_IN_MIN_SPEECH_SECS", "0.35", float),
+                   log=log)
 
 
 def log(msg):
@@ -78,9 +64,11 @@ def record_until_silence(stream, path, start_window, preroll=b""):
     same breath as the name is not clipped."""
     chunk_ms = 100
     silence_limit = cfg("VAD_SILENCE_SECS", "1.5", float)
-    # 10 dB over the floor: high enough that room noise counts as silence and the
-    # recording actually ends, low enough that ordinary speech clears it.
-    threshold = threshold_for("VAD_THRESHOLD_DBFS", "-28", cfg("VAD_ABOVE_FLOOR_DB", "6", float))
+    # A fixed level is enough on this microphone: the room floor measures -45.7
+    # dBFS against speech at -20, so ten dB over the floor separates them with
+    # room to spare. The previous microphone floored at -30 and needed the
+    # threshold adapted continuously to stay above its own noise.
+    threshold = cfg("VAD_THRESHOLD_DBFS", "-36", float)
     max_secs = cfg("VAD_MAX_SECS", "15", float)
     min_secs = cfg("VAD_MIN_SECS", "1.0", float)
     # 0.5s was long enough to miss "نعم". The follow-up window exists precisely
@@ -143,82 +131,7 @@ def record_until_silence(stream, path, start_window, preroll=b""):
         w.setsampwidth(2)
         w.setframerate(RATE)
         w.writeframes(bytes(frames))
-    return normalize(path)
-
-
-def normalize(path):
-    """Report the recorded level, and optionally apply makeup gain.
-
-    Gain is off by default. The Derja STT endpoint is unaffected across a 25dB
-    range, and the same boost measurably hurt whisper on identical audio, so
-    raising a quiet recording buys nothing and can cost accuracy.
-    """
-    with wave.open(str(path)) as w:
-        rate, n = w.getframerate(), w.getnframes()
-        a = array.array("h")
-        a.frombytes(w.readframes(n))
-    if not a:
-        return path
-    peak = max(abs(x) for x in a)
-    rms = math.sqrt(sum(float(x) * x for x in a) / len(a))
-    db = lambda v: 20 * math.log10(v / 32768.0) if v > 0 else -120.0
-    level = f"{n / rate:.1f}s, rms {db(rms):.1f} dBFS, peak {db(peak):.1f} dBFS"
-
-    if rms <= 0 or not flag("AUDIO_NORMALIZE", False):
-        log(f"recorded {level}")
-        return trim_silence(path, rate, a, db)
-
-    gain = min(20.0, (10 ** (-24 / 20) * 32768) / rms)
-    if peak * gain > 32000:
-        gain = 32000 / peak
-    with wave.open(str(path), "w") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(rate)
-        w.writeframes(array.array("h", [max(-32768, min(32767, int(x * gain))) for x in a]).tobytes())
-    log(f"recorded {level}, normalized x{gain:.2f}")
-    return path
-
-
-def trim_silence(path, rate, samples, db):
-    """Cut leading and trailing near-silence before the clip goes to Vosk.
-
-    A recording that is three seconds of speech inside twenty of room noise
-    transcribes as one word or nothing at all: the decoder spends its search on
-    the noise. Trimming is not gain — every remaining sample is untouched — so it
-    does not run into the makeup-gain problem that broke Derja recognition.
-    """
-    if not flag("AUDIO_TRIM", True) or not samples:
-        return path
-    win = max(1, int(rate * 0.05))
-    margin = cfg("AUDIO_TRIM_MARGIN_SECS", "0.25", float)
-    # 6 dB over the floor. A 12.4s recording of a short question transcribed as
-    # one wrong word because most of it was room noise and the decoder spent its
-    # search there; trimming to what is actually above the room fixes that
-    # without touching a single remaining sample.
-    floor = threshold_for("AUDIO_TRIM_DBFS", "-32", cfg("TRIM_ABOVE_FLOOR_DB", "6", float))
-
-    loud = []
-    for i in range(0, len(samples) - win, win):
-        seg = samples[i:i + win]
-        r = math.sqrt(sum(float(x) * x for x in seg) / len(seg))
-        if db(r) > floor:
-            loud.append(i)
-    if not loud:
-        return path
-
-    start = max(0, loud[0] - int(margin * rate))
-    end = min(len(samples), loud[-1] + win + int(margin * rate))
-    kept = end - start
-    if kept >= len(samples) - rate:      # nothing worth cutting
-        return path
-
-    with wave.open(str(path), "w") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(rate)
-        w.writeframes(samples[start:end].tobytes())
-    log(f"  trimmed to {kept / rate:.1f}s of {len(samples) / rate:.1f}s")
+    log(f"  recorded {len(frames) / (RATE * 2):.1f}s")
     return path
 
 
@@ -397,32 +310,25 @@ def wav_secs(path):
         return 0.0
 
 
-def play(path):
-    """Blocks until the audio has actually been heard.
+def play(path, watcher=None):
+    """Play, blocking until it has been heard or until interrupted.
 
-    pw-play can return once the sink has accepted the samples, which over
-    Bluetooth is well before the speaker has emitted them.
+    Over USB, pw-play returns when the samples have actually been emitted, so
+    there is nothing to wait out afterwards; the Bluetooth sink this used to
+    drive returned early and needed the difference slept off.
     """
-    started = time.monotonic()
-    subprocess.run(play_cmd(path), capture_output=True, timeout=cfg("PLAY_TIMEOUT", "120", float))
-    remaining = wav_secs(path) - (time.monotonic() - started)
-    if remaining > 0:
-        time.sleep(remaining)
-
-
-@contextlib.contextmanager
-def muted(stream):
-    """Hard-mute the microphone across playback so Abbes cannot hear itself.
-
-    The tail covers Bluetooth latency: pw-play returns before the speaker has
-    finished emitting the audio it was handed.
-    """
-    stream.mute()
-    try:
-        yield
-    finally:
-        time.sleep(cfg("WAKE_MUTE_TAIL_SECS", "1.5", float))
-        stream.unmute()
+    proc = subprocess.Popen(play_cmd(path), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + cfg("PLAY_TIMEOUT", "120", float)
+    while time.monotonic() < deadline:
+        try:
+            proc.wait(timeout=0.1)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        if watcher is not None and watcher.fired:
+            proc.kill()
+            return
+    proc.kill()
 
 
 def tone_wav():
@@ -498,13 +404,15 @@ def log_turn(transcript, reply):
 def streamed_turn(url, wav_path):
     """One turn through the orchestrator: recording in, speech out as it renders.
 
-    Returns "handled" when the turn ran, "empty" when nothing was actually said
-    (the caller returns to idle quietly and may prompt), and "unreachable" when
-    the orchestrator could not be contacted at all, so the caller can fall back to
-    the direct path rather than leaving the household with silence.
+    Returns (status, carried). Status is "handled" when the turn ran, "empty"
+    when nothing was actually said (the caller returns to idle quietly and may
+    prompt), and "unreachable" when the orchestrator could not be contacted at
+    all, so the caller can fall back to the direct path rather than leaving the
+    household with silence.
 
-    The acknowledgement tone goes through the same playback stream as the reply,
-    so the two cannot overlap and the Bluetooth sink opens exactly once per turn.
+    `carried` is the audio of an interruption: whatever was said over the top of
+    the reply, ready to be answered as the next request. The microphone stays
+    open throughout, which it can because it cannot hear the speaker.
     """
     player = PlaybackStream(sink=cfg("SPEAKER_SINK"), log=log)
     heard = {"text": ""}
@@ -514,39 +422,44 @@ def streamed_turn(url, wav_path):
         heard["text"] = t
         log(f"TRANSCRIPT: {t}")
 
-    try:
+    with barge_in(stream) as watcher:
         try:
-            player.write_wav(ack_wav().read_bytes())
-        except Exception as e:
-            log(f"ack unavailable: {e}")
-        out = stream_turn(url, wav_path, player,
-                          timeout=cfg("ORCHESTRATOR_TIMEOUT", "180", float),
-                          trigger_words=words, on_transcript=note, log=log)
-    except Unreachable as e:
-        player.flush()
-        log(f"FAILED: {e}")
-        if str(e).startswith("orchestrator:"):
-            return "unreachable"
-        log_turn(heard["text"], "")
-        speak_failure()
-        return "handled"
-    finally:
-        player.close()
+            try:
+                player.write_wav(ack_wav().read_bytes())
+            except Exception as e:
+                log(f"ack unavailable: {e}")
+            out = stream_turn(url, wav_path, player,
+                              timeout=cfg("ORCHESTRATOR_TIMEOUT", "180", float),
+                              trigger_words=words, on_transcript=note,
+                              should_stop=lambda: watcher.fired, log=log)
+        except Unreachable as e:
+            player.flush()
+            log(f"FAILED: {e}")
+            if str(e).startswith("orchestrator:"):
+                return "unreachable", b""
+            log_turn(heard["text"], "")
+            speak_failure()
+            return "handled", b""
+        finally:
+            player.close()
 
+    carried = watcher.speech() if watcher.fired else b""
     reply = out.get("reply", "")
     marks = out.get("marks", {})
     if not heard["text"].strip():
-        return "empty"
+        return "empty", carried
     log(f"REPLY: {reply}")
+    if out.get("interrupted"):
+        log("  reply cut short: you spoke over it")
     if marks:
         log(f"  stt {marks.get('sttMs')}ms  first-token {marks.get('firstDeltaMs')}ms  "
             f"first-audio {marks.get('firstAudioMs')}ms  total {marks.get('totalMs')}ms")
     log_turn(heard["text"], reply)
-    if not reply:
+    if not reply and not out.get("interrupted"):
         # Something was said and the agent produced nothing. That is a real
         # failure and worth saying out loud.
         speak_failure()
-    return "handled"
+    return "handled", carried
 
 
 def one_turn(stream, preroll=b"", start_window=None):
@@ -569,75 +482,77 @@ def one_turn(stream, preroll=b"", start_window=None):
 
         orch = cfg("ORCHESTRATOR_URL")
         if orch:
-            with muted(stream):
-                status = streamed_turn(orch, tmp)
+            status, carried = streamed_turn(orch, tmp, stream)
             if status == "handled":
-                return True
+                return True, carried
             if status == "empty":
                 # Nothing was actually said. Return to idle quietly so the caller
                 # can prompt; speaking the failure phrase here is what made Abbes
                 # repeat "ما نجمش نجاوبك توة" at an empty room.
                 log("nothing but noise, back to idle")
-                return False
+                return False, carried
             log("orchestrator unreachable, falling back to the direct path")
 
-        with muted(stream):
-            try:
-                transcript = transcribe(tmp)
-            except Unreachable as e:
-                log(f"FAILED: {e}")
-                speak_failure()
-                return True
-            finally:
-                tmp.unlink(missing_ok=True)
+        try:
+            transcript = transcribe(tmp)
+        except Unreachable as e:
+            log(f"FAILED: {e}")
+            speak_failure()
+            return True, b""
+        finally:
+            tmp.unlink(missing_ok=True)
 
-            cleaned = clean_transcript(transcript)
-            if cleaned != transcript:
-                log(f"stripped noise labels: {transcript!r} -> {cleaned!r}")
-            transcript = cleaned
-            if not transcript:
-                log("nothing but noise, back to idle")
-                return False
-            log(f"TRANSCRIPT: {transcript}")
+        cleaned = clean_transcript(transcript)
+        if cleaned != transcript:
+            log(f"stripped noise labels: {transcript!r} -> {cleaned!r}")
+        transcript = cleaned
+        if not transcript:
+            log("nothing but noise, back to idle")
+            return False, b""
+        log(f"TRANSCRIPT: {transcript}")
 
-            spoken = MATCHER.strip(transcript) if MATCHER else transcript
-            if spoken != transcript:
-                log(f"stripped trigger word: {spoken!r}")
-            if not spoken:
-                log("only the name, nothing asked")
-                return True
+        spoken = MATCHER.strip(transcript) if MATCHER else transcript
+        if spoken != transcript:
+            log(f"stripped trigger word: {spoken!r}")
+        if not spoken:
+            log("only the name, nothing asked")
+            return True, b""
 
-            ack = None
-            try:
-                ack = play_async(ack_wav())
-            except Exception as e:
-                log(f"ack unavailable: {e}")
+        ack = None
+        try:
+            ack = play_async(ack_wav())
+        except Exception as e:
+            log(f"ack unavailable: {e}")
 
-            try:
-                reply = ask_gateway(spoken)
-            except Unreachable as e:
-                log(f"FAILED: {e}")
-                log_turn(spoken, "")
-                speak_failure()
-                return True
+        try:
+            reply = ask_gateway(spoken)
+        except Unreachable as e:
+            log(f"FAILED: {e}")
+            log_turn(spoken, "")
+            speak_failure()
+            return True, b""
 
-            log(f"REPLY: {reply}")
-            log_turn(spoken, reply)
-            if not reply:
-                return True
+        log(f"REPLY: {reply}")
+        log_turn(spoken, reply)
+        if not reply:
+            return True, b""
 
-            out = pathlib.Path(RECORD_DIR) / f"abbes-tts-{uuid.uuid4().hex}.wav"
-            try:
-                synthesize(reply, voice_for(reply), out)
-                if ack is not None:
-                    ack.wait(timeout=10)
-                play(out)
-            except Unreachable as e:
-                log(f"FAILED: {e}")
-                speak_failure()
-            finally:
-                out.unlink(missing_ok=True)
-        return True
+        out = pathlib.Path(RECORD_DIR) / f"abbes-tts-{uuid.uuid4().hex}.wav"
+        carried = b""
+        try:
+            synthesize(reply, voice_for(reply), out)
+            if ack is not None:
+                ack.wait(timeout=10)
+            with barge_in(stream) as watcher:
+                play(out, watcher)
+            if watcher.fired:
+                carried = watcher.speech()
+        except Unreachable as e:
+            log(f"FAILED: {e}")
+            speak_failure()
+        finally:
+            out.unlink(missing_ok=True)
+        return True, carried
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -664,8 +579,13 @@ def conversation(stream, preroll):
     start speaking -- two seconds or thirty, it does not matter -- and only stops
     recording when you stop. A request that arrives in the same breath as the name
     is caught by the pre-roll and answered without the prompt.
+
+    The name is only ever needed to start. After that this stays in a back-and-
+    forth: each answer reopens the window, and cutting Abbes off mid-sentence
+    carries what you said into the next turn, so an interruption is a reply
+    rather than a restart.
     """
-    followup = cfg("WAKE_FOLLOWUP_SECS", "10", float)
+    followup = cfg("WAKE_FOLLOWUP_SECS", "45", float)
     can_prompt = flag("WAKE_PROMPT", True)
     window = cfg("WAKE_REQUEST_SECS", "1.5", float) if can_prompt else None
 
@@ -675,8 +595,7 @@ def conversation(stream, preroll):
     if can_prompt and not _preroll_has_speech(preroll):
         log(f"name heard; answering {PROMPT_PHRASE} and waiting for the question")
         try:
-            with muted(stream):
-                play(prompt_wav())
+            play(prompt_wav())
         except Exception as e:
             log(f"prompt unavailable: {e}")
         can_prompt = False
@@ -684,13 +603,21 @@ def conversation(stream, preroll):
         window = cfg("WAKE_PROMPT_SECS", "30", float)
 
     while True:
-        if one_turn(stream, preroll, window):
-            preroll = b""
+        spoke, carried = one_turn(stream, preroll, window)
+        if spoke:
+            preroll = carried
             can_prompt = False
             if followup <= 0:
                 return
-            window = followup
-            log(f"follow-up window: {followup:g}s, no name needed")
+            if carried:
+                # Already mid-sentence when Abbes stopped. Answering it straight
+                # away is the whole point of being interruptible; waiting for the
+                # speaker to start again would make them say it twice.
+                log(f"carrying {len(carried) / (RATE * 2):.1f}s of interruption into the next turn")
+                window = cfg("WAKE_PROMPT_SECS", "30", float)
+            else:
+                window = followup
+                log(f"follow-up window: {followup:g}s, no name needed")
             continue
         if not can_prompt:
             return
@@ -698,8 +625,7 @@ def conversation(stream, preroll):
         preroll = b""
         log(f"name with no request; asking {PROMPT_PHRASE}")
         try:
-            with muted(stream):
-                play(prompt_wav())
+            play(prompt_wav())
         except Exception as e:
             log(f"prompt unavailable: {e}")
             return
@@ -767,17 +693,15 @@ def start_announce_listener(stream):
 
     def notice(gap_secs):
         log(f"announce: link was down {gap_secs:.0f}s, saying so")
-        with muted(stream):
-            player = PlaybackStream(sink=cfg("SPEAKER_SINK"), log=log)
-            try:
-                player.write_wav(reconnect_wav().read_bytes())
-            finally:
-                player.close()
+        player = PlaybackStream(sink=cfg("SPEAKER_SINK"), log=log)
+        try:
+            player.write_wav(reconnect_wav().read_bytes())
+        finally:
+            player.close()
 
     listener = AnnounceListener(
         announce_url(url),
         make_player=lambda: PlaybackStream(sink=cfg("SPEAKER_SINK"), log=log),
-        mute_ctx=lambda: muted(stream),
         log=log,
         on_reconnect=notice,
         reconnect_notice_secs=cfg("RECONNECT_NOTICE_SECS", "120", float),
@@ -789,9 +713,12 @@ def start_announce_listener(stream):
 def start_camera_poller():
     """Off unless CAMERA_ENABLED. Failing to see must never stop it hearing.
 
-    That is not free advice: this camera is the same USB device as the
-    microphone, and a wedged camera has already cost the assistant its hearing
-    once. Hence the back-off and the reset.
+    The camera used to be the same USB device as the microphone, so polling it
+    starved the thing that mattered and wedging it cost the assistant its hearing
+    for ninety minutes. The microphone now lives in the speakerphone, so the
+    camera is free to be a camera: polled several times a minute, and left to
+    recover on its own if it faults, without a USB reset that would have taken
+    the microphone down with it.
     """
     if not flag("CAMERA_ENABLED", False):
         return None
@@ -809,10 +736,8 @@ def start_camera_poller():
                width=cfg("CAMERA_WIDTH", "640", int),
                height=cfg("CAMERA_HEIGHT", "480", int),
                log=log),
-        interval=cfg("CAMERA_INTERVAL_SECS", "3", float),
-        wedge_interval=cfg("CAMERA_WEDGE_INTERVAL_SECS", "300", float),
-        repair=usb_reset(cfg("CAMERA_RESET_CMD", "~/bin/abbes-camera-reset.sh"), log=log)
-                if flag("CAMERA_SELF_REPAIR", True) else None,
+        interval=cfg("CAMERA_INTERVAL_SECS", "5", float),
+        wedge_interval=cfg("CAMERA_WEDGE_INTERVAL_SECS", "60", float),
         idle=IDLE.is_set,
         log=log,
     )
@@ -884,7 +809,6 @@ def main():
                     hit = satellite.heard_name()
                 elif listener is not None:
                     hit = listener.feed(chunk)
-                    ROOM["floor"] = listener.noise_floor
                 else:
                     continue
                 if hit:
@@ -925,9 +849,8 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except MicGone as e:
-        # systemd restarts the loop, but a fresh parecord on a wedged USB bus is
-        # exactly as deaf as the old one. Reset on the way out, so the next start
-        # finds a working device instead of crash-looping every 35 seconds.
-        attempt_mic_repair(log=log)
+    except MicGone:
+        # The microphone is its own USB device now, and a class-compliant one:
+        # systemd restarting the loop is the whole repair. The bus reset this
+        # used to run existed for a webcam that wedged and took hearing with it.
         sys.exit(1)

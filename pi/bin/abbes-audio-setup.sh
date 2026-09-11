@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
-# Select the output and pin its level, once, at boot.
+# Select the speakerphone for both directions, once, at boot.
 #
-# Output is the Pi's own 3.5mm jack, wired to the speaker's aux input. It was
-# Bluetooth until the Bluetooth stopped being worth it: the speaker had only
-# ever paired as a headset, so PipeWire gave it the HSP profile -- 8 kHz mono,
-# quiet and muffled -- and A2DP was never even offered. Forcing the profile
-# needed a re-pair, the re-pair needed the speaker in pairing mode, and the
-# adapter wedged on the way (hci0 DOWN, "Connection timed out"). A cable has
-# none of those states.
+# This used to be a negotiation. Over Bluetooth the speaker only ever paired as a
+# headset, so PipeWire gave it HSP -- 8 kHz mono, quiet and muffled -- and A2DP
+# was never offered; forcing the profile needed a re-pair, the re-pair needed the
+# speaker in pairing mode, and the adapter wedged on the way. A cable fixed that
+# and brought its own: output went to the 3.5mm jack while input came from a
+# webcam across the room, two devices that could not hear each other, which is
+# why the microphone had to be muted for every word Abbes said.
 #
-# What that removes, besides the noise: a device that renegotiates its profile
-# on reconnect, a sink whose name changes with it, an auto-switch to headset
-# whenever anything opens a microphone, and a speaker that restores its own
-# saved volume behind us.
+# A USB speakerphone is one device doing both. It cancels its own output in
+# hardware, so nothing needs muting, and it enumerates the same way every boot,
+# so nothing needs re-pairing. What is left is choosing it and setting a level.
 set -uo pipefail
 
 CONF="$HOME/.config/voicepi/voicepi.env"
@@ -24,22 +23,24 @@ for _ in $(seq 30); do
 done
 pactl info >/dev/null 2>&1 || { echo "pipewire not ready" >&2; exit 1; }
 
-# Default to the onboard analog output. SPEAKER_SINK overrides it, which is the
-# hook for plugging in a USB DAC later without editing this.
 SINK="${SPEAKER_SINK:-}"
-if [ -z "$SINK" ]; then
-    SINK=$(pactl list sinks short 2>/dev/null | awk '/alsa_output.*mailbox/ {print $2; exit}')
-fi
-[ -n "$SINK" ] || { echo "no analog sink found" >&2; exit 1; }
+[ -n "$SINK" ] || SINK=$(pactl list sinks short 2>/dev/null | awk '/usb.*[Jj]abra/ {print $2; exit}')
+[ -n "$SINK" ] || { echo "no USB speakerphone sink found; set SPEAKER_SINK" >&2; exit 1; }
 
+SOURCE="${MIC_SOURCE:-}"
+[ -n "$SOURCE" ] || SOURCE=$(pactl list sources short 2>/dev/null | awk '/alsa_input.*usb.*[Jj]abra/ {print $2; exit}')
+[ -n "$SOURCE" ] || { echo "no USB speakerphone source found; set MIC_SOURCE" >&2; exit 1; }
+
+# Defaults matter beyond this loop: the Jellyfin player and anything else that
+# makes noise on this Pi follow them, and nothing should come out of the jack
+# now that there is no speaker on it.
 pactl set-default-sink "$SINK" 2>/dev/null || true
+pactl set-default-source "$SOURCE" 2>/dev/null || true
 
-# The jack routes to headphones rather than HDMI. On this board that is a card
-# control, not a PipeWire one, so it is set here and not left to chance.
-amixer -c 0 cset numid=3 1 >/dev/null 2>&1 || true
-
-pactl set-sink-volume "$SINK" "${SPEAKER_BOOT_VOLUME:-50}%" 2>/dev/null || true
+pactl set-sink-volume "$SINK" "${SPEAKER_BOOT_VOLUME:-60}%" 2>/dev/null || true
 pactl set-sink-mute "$SINK" 0 2>/dev/null || true
+pactl set-source-mute "$SOURCE" 0 2>/dev/null || true
 
-echo "audio ready: $SINK"
+echo "output: $SINK"
+echo "input:  $SOURCE"
 echo "volume pinned: $(pactl get-sink-volume "$SINK" 2>/dev/null | head -1 | grep -o '[0-9]*%' | head -1)"

@@ -213,8 +213,11 @@ of it lives in a deploy script, so it is recorded here.
   `jellyfin-mpv-shim` on **voicepi**, registered in Jellyfin as the player
   **Abbes Pi**. It is logged in as a dedicated non-admin Jellyfin user `abbes`
   (not a household member's account); `~/.config/jellyfin-mpv-shim/mpv.conf`
-  pins `vo=null` (headless) and the analog output sink, the same speaker the
-  voice path uses.
+  pins `vo=null` (headless) and the USB speakerphone sink, the same speaker the
+  voice path uses. **That sink name is pinned in three places** — this file,
+  `voicepi.env` (`SPEAKER_SINK`), and `mpv.conf` — so changing the speaker means
+  changing all three. Missing the `mpv.conf` one is silent: speech moves to the
+  new device and music keeps playing to a sink nobody can hear.
 
 After changing any server's config: `openclaw mcp reload`, then restart the
 gateway. `openclaw mcp probe <name>` lists the live tool count.

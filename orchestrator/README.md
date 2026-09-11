@@ -203,12 +203,27 @@ an afternoon is two errands.
 This is what decouples "did the stream survive" from "did the side effect land",
 which is the thing that forced the never-retry rule in the first place.
 
+## Phase 5 — barge-in, done early and for free
+
+Barge-in was planned as the last phase and arrived with a change of microphone. The
+speaker and the microphone are now one USB speakerphone that cancels its own output in
+hardware, so the microphone no longer has to be muted while Abbes talks; once it is
+open, hearing someone start to speak is a level comparison.
+
+What that needed here: `/turn/stream` now treats a **client hang-up as an abort**. The
+Pi closes the connection when it stops playback, and the handler calls `chat.abort` on
+the voice session rather than letting the model finish an answer nobody is hearing. The
+`WAKE_MUTE_TAIL_SECS` item below is gone with the mute it padded.
+
+`PlaybackStream.close()` is where the interruption actually lands. Sentences queue to
+`pw-cat` far faster than realtime, so by the last frame the speaker still has seconds
+to play; polling the interrupt through the drain is what makes it stop mid-sentence
+instead of at the end.
+
 ## Still to do
 
 - Filler cue on `session.tool`. The orchestrator sees the event and logs it; it
   does not yet emit a cue frame, and the Pi does not yet hold filler clips. This is
   the highest-value remaining item: first token took 10.3 s on a turn that read
   files, and nothing covers that silence.
-- Shorten `WAKE_MUTE_TAIL_SECS` from its 1.5 s guess now that the persistent stream
-  can report real drain timing.
-- Input streaming (Phase 4) and barge-in (Phase 5).
+- Input streaming (Phase 4).

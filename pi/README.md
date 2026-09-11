@@ -39,72 +39,67 @@ rather than piping one over stdin:
 
 ## Notes on this hardware
 
-**Output is the 3.5mm jack**, wired to the speaker's aux input. It was Bluetooth, and
-that is worth recording because the failure was not obvious.
+**Input and output are one USB speakerphone** — a Jabra SPEAK 510. That single fact
+removes most of what used to be in this section, so the history is kept below rather
+than the workarounds.
 
-The speaker had only ever paired as a *headset*: its cached record listed the Headset
-UUID and nothing else, so PipeWire gave it `headset-head-unit` and `a2dp-sink` was never
-offered. That profile is mono 8kHz CVSD — telephone quality — which is why spoken
-replies were faint and muffled, and why a stray Bluetooth microphone kept appearing
-alongside. Getting A2DP needed a re-pair; the re-pair needed the speaker in pairing
-mode; and the adapter wedged partway through (`hci0 DOWN`, `Can't init device hci0:
-Connection timed out`, `Failed to set mode: Authentication Failed`). A cable has none
-of these states.
+**It cancels its own output in hardware, and that is load-bearing.** Measured 11 Sep
+2026: a 440 Hz tone at 70% volume, played out of this speaker and recorded on its own
+microphone at the same instant, peaks at **−48.9 dBFS** — below the room's own quiet
+floor of −45.7. The microphone cannot hear the speaker at all. So the microphone is
+never muted, `WAKE_MUTE_TAIL_SECS` is gone, the acknowledgement tone can play into a
+live microphone without landing in the recording, and **you can interrupt Abbes
+mid-sentence** (see *Barge-in*). If this device is ever swapped for a separate speaker
+and microphone, all four of those have to come back together.
 
-What the cable removes, beyond the noise: a device that renegotiates its profile on
-every reconnect, a sink whose name changes with it, WirePlumber auto-switching to the
-headset profile whenever anything opens a microphone, a speaker that restores its own
-saved volume behind us, and a bond that did not survive a reboot because this speaker
-stores no link key.
+**Its microphone is quiet and it is 16 kHz native.** Floor −45.7 dBFS median (−51.9
+min, −31.0 peak) against speech around −20. The webcam microphone it replaced floored
+at **−30.1** — at, or above, every threshold that was meant to sit over it, which is
+why the wake gate ran the decoder on room noise continuously and why the VAD could
+barely tell a talking person from an empty room. With 18 dB of headroom a fixed
+threshold is enough: `VAD_THRESHOLD_DBFS=-36`, `WAKE_GATE_DBFS=-40`, no adaptation.
+It also delivers exactly the 16 kHz mono the recogniser wants, so nothing is resampled.
 
-If Bluetooth is ever wanted again, the thing to get right is the pairing: pair it while
-it advertises A2DP, and check `pactl list cards` offers `a2dp-sink` before believing it
-works. `headset-head-unit` as the only option means it paired as a headset.
+Re-measure both numbers if the device or the room changes — `bin/mic-level.sh`, and the
+echo test is worth repeating on any new speakerphone before trusting barge-in:
 
-**Mic level is low, and it moves.** The same microphone at the same gain measured a
-−24.8 dBFS noise floor at 3am and −36.3 at 4pm. A fixed threshold is therefore wrong
-twice a day: one set for the quiet hours left the assistant completely deaf in the
-afternoon, with 0 of 39 windows crossing it. The gate now tracks the floor — see
-`abbes_wake.Listener` and `abbes_wake_test.py`. Do not replace it with a constant.
+```bash
+parecord --device=$MIC --rate=16000 --channels=1 --format=s16le --file-format=wav /tmp/e.wav &
+paplay --device=$SINK /tmp/tone.wav       # anything loud
+```
 
-**The camera and the microphone are one USB device, and the camera can take the
-microphone down with it.** They are two functions of the same Sunplus webcam. Ask
-that device for a frame rate or for YUYV and it drops into EPROTO on every control
-transfer; from there `v4l2-ctl` returns `VIDIOC_STREAMON: Input/output error` and
-every grab yields a zero-length file. That much was known and is why `abbes_camera`
-uses one fixed MJPG invocation.
+If the recording during playback sits near the room floor, the cancellation is real.
+If it sits 20 dB above it, the microphone hears the speaker and muting has to come back.
 
-What was not known is what it does to the audio. When the device wedged, `parecord`
-did **not** exit. It stayed alive and delivered nothing, for ninety minutes. Nothing
-in the journal, no trigger, no error — the loop sat in `read()` seeing an unusually
-quiet room, and the assistant was deaf while every service still reported `active`.
-`pw-record` from that source captured zero frames; after a USB reset the same source
-gave 5.9s of clean audio at −26.7 dBFS. So the two failures are one failure.
+**The camera is now only a camera.** It is a separate Sunplus webcam, and the
+microphone no longer lives on it. Ask that device for a frame rate or for YUYV and it
+still drops into EPROTO on every control transfer, which is why `abbes_camera` uses one
+fixed MJPG invocation — but a wedge is now a lost camera, not a deaf assistant.
 
-Three things changed as a result, and none should be reverted casually:
+That distinction cost ninety minutes once. When the device wedged, `parecord` did not
+exit: it stayed alive and delivered nothing, with no journal line, no trigger and no
+error, while every service still reported `active`. One thing from that episode is kept
+because it is still the right guard on any microphone:
 
 - **Silence is timed.** `MicStream` raises `MicGone` after `DEAD_SECS` (30s) with no
-  audio while unmuted, so systemd restarts the loop instead of leaving it deaf and
-  looking healthy. A mute does not count — see `abbes_audio_test.py`.
-- **A wedge backs off and repairs itself.** Polling a wedged device every three
-  seconds is a continuous stream of failing control transfers, and that is what keeps
-  the microphone starved. The poller now drops to `CAMERA_WEDGE_INTERVAL_SECS` (300s)
-  and runs `abbes-camera-reset.sh`, but only between turns, since the reset drops the
-  device for a moment. The old comment claiming a reset would cost the microphone had
-  it backwards: not resetting is what costs the microphone.
-- **The interval is 15s, not 3s.** Every grab reopens the device and the driver logs
-  `Error -5 querying master control (Focus, Automatic Continuous)`. At three seconds
-  that is over a thousand opens an hour. Presence does not need that granularity.
+  audio, so systemd restarts the loop instead of leaving it deaf and looking healthy.
 
-If it ever goes quiet again, `journalctl --user-unit=abbes-loop` says so and the
-loop resets the bus itself on the way down — MicGone runs
-`abbes-camera-reset.sh`, rate-limited to one attempt per `MIC_RESET_MIN_SECS`
-(600) via a marker in `XDG_RUNTIME_DIR`, so an actually-unplugged microphone
-does not get the bus reset every 35 seconds. That limit exists because the
-detection alone once produced a 363-restart crash loop: the device wedged while
-the camera was healthy, the poller's reset never fired, and every fresh
-parecord was as deaf as the last. If the loop is restarting and the repair line
-says it is waiting, the device needs unplugging, not another reset.
+Two others were removed with the hardware that justified them: the poller no longer
+runs `abbes-camera-reset.sh` on a wedge, and `MicGone` no longer resets the USB bus on
+the way down. Both existed to rescue a microphone that lived on the camera. Resetting
+the bus now would take down a *working* microphone to repair a camera, which is
+backwards. Polling went from 15s to 5s for the same reason — the grabs are no longer
+competing with hearing.
+
+**Earlier arrangements, for anyone tempted to go back.** Before the speakerphone,
+output was the 3.5mm jack and input was the webcam across the room. Before that it was
+Bluetooth: the speaker had only ever paired as a *headset*, its cached record listing
+the Headset UUID alone, so PipeWire gave it `headset-head-unit` — mono 8 kHz CVSD,
+telephone quality — and `a2dp-sink` was never offered. Getting A2DP needed a re-pair,
+the re-pair needed the speaker in pairing mode, and the adapter wedged partway through
+(`hci0 DOWN`, `Connection timed out`). If Bluetooth is ever wanted again, pair it while
+it advertises A2DP and check `pactl list cards` actually offers `a2dp-sink` before
+believing it works.
 
 ## Reaching the other two hosts
 
@@ -259,7 +254,7 @@ of continuous quiet.
 | `WAKE_GATE_DBFS` | Below this the decoder sleeps. Put it above the room's noise floor. |
 | `WAKE_PREROLL_SECS` | Audio kept from before the trigger. |
 | `WAKE_FOLLOWUP_SECS` | Window after a reply where the name is not needed. 0 disables. |
-| `WAKE_MUTE_TAIL_SECS` | How long the mic stays muted after playback. |
+| `BARGE_IN_DBFS` | Speaking over Abbes this loudly stops it. 0 disables. |
 
 Comparison folds diacritics, alef forms (أإآ→ا, ى→ي, ة→ه) and Latin accents, then allows
 `WAKE_FUZZ` edits, so عبّاس, عباس, Abbes and abbas all match one entry.
@@ -294,20 +289,34 @@ which is what is wanted. No sudo, and no grepping every service on the box.
 The same is not true of the gateway and inference hosts, where `--user -u` works. This is
 a property of this Pi's journald, not of user units in general.
 
-### Not hearing yourself
+### Not hearing yourself, and letting yourself be interrupted
 
-The microphone is hard-muted for the whole turn after recording ends: chunks are dropped
-at the source and the recogniser is reset. `WAKE_MUTE_TAIL_SECS` then keeps it muted past
-the end of playback, covering output latency and the room's own reverb tail.
+The microphone used to be hard-muted for the whole turn after recording ended, with
+`WAKE_MUTE_TAIL_SECS` holding the mute past the end of playback to cover output latency
+and the room's reverb tail. At 0.7s a follow-up window recorded the last word of Abbes's
+own reply and sent it back to the gateway; 1.5s fixed it.
 
-That tail is what matters. At 0.7s a follow-up window recorded the last word of Abbes's
-own reply and sent it back to the gateway; 1.5s fixed it. `play()` additionally waits out
-the file's real duration, which measurement later showed is redundant — `pw-play` already
-blocks for the full length (7.3s for a 7.2s file), cold sink or warm. It is kept as a cheap
-guard against a player that does not.
+None of that is needed now: the speakerphone cancels its own output, so Abbes cannot
+hear itself no matter how long the microphone stays open. The mute, the tail and the
+1.5s of dead air at the end of every reply are gone.
 
-Verified: asked to say its own name, Abbes answered `...وسمّيتني "عباس" قبيلة...` through
-the speaker, did not wake itself, and the follow-up window stayed silent.
+What the open microphone buys is **barge-in**. While Abbes speaks, a watcher
+(`abbes_audio.BargeIn`) reads the same stream and looks for sustained speech above
+`BARGE_IN_DBFS` (−30, well clear of the −45.7 floor) for `BARGE_IN_MIN_SPEECH_SECS`
+(0.35s, long enough that a door or a cough does not count). When it fires:
+
+1. Playback is killed — including mid-drain, which is where most of a reply is actually
+   heard, since sentences are queued to `pw-cat` far faster than realtime.
+2. The HTTP connection to the orchestrator is closed, and the orchestrator takes that
+   as the signal to `chat.abort` the run. An interruption costs no further tokens and
+   leaves no half-finished turn generating into nothing.
+3. **The audio from the moment you started speaking is kept** and becomes the next
+   request. This is the part that makes it feel like interrupting a person rather than
+   pressing stop: you are not asked to say it again.
+
+Set `BARGE_IN_DBFS=0` to switch it off. Verified: asked to say its own name, Abbes
+answered `...وسمّيتني "عباس" قبيلة...` through the speaker, did not wake itself, and the
+follow-up window stayed silent.
 
 ### Known limits
 
@@ -325,9 +334,11 @@ identical multipart POST and return `{"text": ...}`, so switching engines is a p
 change and nothing else. Whisper keeps resolving Derja toward MSA and fragments when it
 cannot; the Vosk model is trained on TARIC, real Tunisian speech.
 
-**Do not apply makeup gain.** `AUDIO_NORMALIZE` defaults to `0` and should stay there.
-The loop used to normalise every clip to −24 dBFS RMS, which was tuned for whisper and
-actively broke Derja recognition:
+**Do not apply makeup gain.** There is no longer a knob for it — `AUDIO_NORMALIZE` and
+the silence trimmer that went with it were removed, because both existed to rescue
+recordings from a microphone that no longer exists. The finding that removed them still
+stands, and is why nothing should put them back. The loop once normalised every clip to
+−24 dBFS RMS, which was tuned for whisper and actively broke Derja recognition:
 
 | | with gain (x2.72) | without |
 |---|---|---|
@@ -336,9 +347,9 @@ actively broke Derja recognition:
 A real recording measured rms −31.6 dBFS but **peak −9.3 dBFS**; multiplying by 2.72 put
 the peaks within a decibel of clipping. The Vosk endpoint is level-insensitive across
 about 25dB, so the gain bought nothing and cost the transcript. Measure the level instead
-— it is printed on every turn:
+— every turn prints the thresholds it used against what it actually heard:
 
-    recorded 6.1s, rms -31.6 dBFS, peak -9.3 dBFS
+    levels: threshold -36.0 dBFS, p50 -41.2 p90 -19.8 max -12.4
 
 Use `bin/mic-level.sh` to see the same figures live when setting thresholds. It must be
 run directly on the Pi, in a terminal you are watching — a level meter driven over a

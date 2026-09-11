@@ -47,11 +47,10 @@ class AnnounceListener:
     a turn builds its own.
     """
 
-    def __init__(self, url, make_player, mute_ctx, log=lambda *a: None,
+    def __init__(self, url, make_player, log=lambda *a: None,
                  on_reconnect=None, reconnect_notice_secs=120):
         self.url = url
         self.make_player = make_player
-        self.mute_ctx = mute_ctx
         self.log = log
         self.on_reconnect = on_reconnect
         self.reconnect_notice_secs = reconnect_notice_secs
@@ -60,7 +59,6 @@ class AnnounceListener:
         self._connected_at = None
         self._down_since = None
         self._player = None
-        self._mute = None
 
     def start(self):
         self._thread = threading.Thread(target=self._run, name="announce", daemon=True)
@@ -147,22 +145,12 @@ class AnnounceListener:
         self._player.write_wav(wav)
 
     def _enter_playback(self):
-        self._mute = self.mute_ctx()
-        self._mute.__enter__()
         self._player = self.make_player()
 
     def _finish(self):
         player, self._player = self._player, None
-        mute, self._mute = self._mute, None
-        try:
-            if player:
-                player.close()
-        finally:
-            if mute:
-                # The mute tail lives in the context manager, so unmuting waits
-                # for the speaker the same way a turn does.
-                mute.__exit__(None, None, None)
         if player:
+            player.close()
             self.log("announce: spoken")
 
 
