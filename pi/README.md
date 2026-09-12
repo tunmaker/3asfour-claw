@@ -112,7 +112,36 @@ nothing and holding the bus down while it tried.
 
 If the assistant goes silent and `journalctl -k | grep NYET` has entries, the
 controller is wedged and it needs a reboot. Check it before suspecting the
-microphone.
+microphone. `abbes-audio-unwedge.sh` rebinds the controller, which clears the
+stuck FIQ channel where a device-level USB reset cannot.
+
+**`dwc_otg.fiq_fsm_mask=0xD` was tried and reverted. Do not try it again.**
+The reasoning was sound: bit 1 governs periodic splits, which is what a
+full-speed audio device behind a high-speed hub actually uses, so clearing it
+moves those transfers off the FIQ onto the plain IRQ handler. It did exactly
+what it promised on the capture side — zero NYET errors, microphone solid.
+
+It destroyed playback. Measured by playing a 3s 440 Hz tone out the speakerphone
+and recording it on the webcam's microphone, which is a separate device with no
+echo-cancellation relationship to it:
+
+| | envelope of a steady tone |
+|---|---|
+| default `0xF` | flat |
+| `0xD` | **27 dB swing** (-9 to -36 dBFS), audible as stutter |
+
+Confirmed as the parameter and not bus contention: with the loop stopped and the
+camera not polling at all, the same test still showed a 19 dB swing. The mask
+cannot separate isochronous from interrupt splits — bit 1 is both — so there is
+no middle setting that keeps capture fixed without breaking playback this way.
+
+The remaining untried option is `dwc_otg.speed=1`, which forces the whole
+controller to full speed so that no split transactions exist at all. That
+genuinely eliminates the failure class, at the cost of putting Ethernet on a
+shared 12 Mbit bus. It is a diagnostic setting, not a deployment one.
+
+The honest conclusion is that this speakerphone on a Pi 3B is marginal by
+construction. A Pi 4 or 5 has a real xHCI controller and none of this applies.
 
 **The camera is now only a camera.** It is a separate Sunplus webcam, and the
 microphone no longer lives on it. Ask that device for a frame rate or for YUYV and it
