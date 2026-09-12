@@ -713,12 +713,16 @@ def start_announce_listener(stream):
 def start_camera_poller():
     """Off unless CAMERA_ENABLED. Failing to see must never stop it hearing.
 
-    The camera used to be the same USB device as the microphone, so polling it
-    starved the thing that mattered and wedging it cost the assistant its hearing
-    for ninety minutes. The microphone now lives in the speakerphone, so the
-    camera is free to be a camera: polled several times a minute, and left to
-    recover on its own if it faults, without a USB reset that would have taken
-    the microphone down with it.
+    Moving the microphone off the camera's USB device did not make the camera
+    free. Both stream isochronously, and on a Pi 3B every USB device sits behind
+    one hub on one dwc_otg controller whose isochronous scheduling is the weak
+    point: a full-speed audio device there runs over split transactions, which is
+    exactly what the FIQ handles badly. Polling this camera every five seconds
+    put enough pressure on that path to wedge it for every device at once --
+    both microphones silent, Ethernet on the same hub untouched.
+
+    So the interval is deliberately slow. Seeing who walked in does not need
+    seconds, and hearing does.
     """
     if not flag("CAMERA_ENABLED", False):
         return None
@@ -736,8 +740,10 @@ def start_camera_poller():
                width=cfg("CAMERA_WIDTH", "640", int),
                height=cfg("CAMERA_HEIGHT", "480", int),
                log=log),
-        interval=cfg("CAMERA_INTERVAL_SECS", "5", float),
-        wedge_interval=cfg("CAMERA_WEDGE_INTERVAL_SECS", "60", float),
+        interval=cfg("CAMERA_INTERVAL_SECS", "45", float),
+        wedge_after=cfg("CAMERA_WEDGE_AFTER", "3", int),
+        wedge_interval=cfg("CAMERA_WEDGE_INTERVAL_SECS", "600", float),
+        state=cfg("CAMERA_STATE", "~/.local/state/voicepi/camera-failures"),
         idle=IDLE.is_set,
         log=log,
     )
@@ -850,7 +856,13 @@ if __name__ == "__main__":
     try:
         main()
     except MicGone:
-        # The microphone is its own USB device now, and a class-compliant one:
-        # systemd restarting the loop is the whole repair. The bus reset this
-        # used to run existed for a webcam that wedged and took hearing with it.
+        # Nothing is attempted here on purpose. A USB reset of the microphone was
+        # tried against this failure and did not recover it; neither did resetting
+        # it with nothing holding the device. When the controller's isochronous
+        # scheduling wedges it takes every audio device with it, and the only
+        # measured cure is a reboot. So the loop exits and lets systemd back off,
+        # rather than spending the bus on a repair that does not work.
+        log("the microphone is not delivering. If this repeats, check "
+            "`journalctl -k | grep NYET`: a wedged USB controller needs a reboot, "
+            "and no amount of restarting will fix it.")
         sys.exit(1)

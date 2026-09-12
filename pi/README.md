@@ -71,6 +71,49 @@ paplay --device=$SINK /tmp/tone.wav       # anything loud
 If the recording during playback sits near the room floor, the cancellation is real.
 If it sits 20 dB above it, the microphone hears the speaker and muting has to come back.
 
+**The USB controller is the real constraint on this Pi, and it is shared.**
+Everything hangs off one `dwc_otg` controller behind one SMSC9514 hub — Ethernet
+included:
+
+```
+dwc_otg root hub (480M)
+ └── SMSC9514 hub
+      ├── Dev 003  Ethernet  480M   smsc95xx
+      ├── Dev 004  Jabra      12M   snd-usb-audio   <- full speed
+      └── Dev 007  webcam    480M   uvcvideo
+```
+
+The speakerphone is a **full-speed (12M) device behind a high-speed hub**, so
+every audio frame is a USB *split transaction*, and split isochronous transfers
+are the known weak point of `dwc_otg`'s FIQ. The camera streams isochronously
+too. They compete for the same scheduling.
+
+It wedged, once, and the shape is worth knowing because nothing about it looks
+like an audio fault:
+
+- 530 kernel errors, every one of them on the speakerphone's audio-in endpoint:
+  `Transfer to device 4 endpoint 0x3 failed - FIQ reported NYET. Data may have
+  been lost.` Nothing else on the bus, ever.
+- Then capture simply stopped. ALSA still reported the stream `Running`,
+  PipeWire still listed the source `RUNNING`, the device was still enumerated,
+  and `parecord` produced a **44-byte WAV — a header and no samples**.
+- **The webcam's own microphone was equally dead**, while Ethernet on the same
+  hub kept working. So it is not the device: it is isochronous scheduling for
+  every audio device at once.
+- A `USBDEVFS_RESET` of the speakerphone did not recover it. Neither did the
+  same reset with nothing holding the device. Only a reboot did.
+
+Two things follow. **Poll the camera slowly** — `CAMERA_INTERVAL_SECS=45`; at 5s
+it put enough pressure on that path to wedge it overnight. And **restarting is
+not a repair**: a fresh `parecord` on a wedged endpoint is exactly as deaf as
+the old one, which is why the loop backs off to five minutes instead of
+restarting every 38 seconds. It ran 404 times in four hours once, recovering
+nothing and holding the bus down while it tried.
+
+If the assistant goes silent and `journalctl -k | grep NYET` has entries, the
+controller is wedged and it needs a reboot. Check it before suspecting the
+microphone.
+
 **The camera is now only a camera.** It is a separate Sunplus webcam, and the
 microphone no longer lives on it. Ask that device for a frame rate or for YUYV and it
 still drops into EPROTO on every control transfer, which is why `abbes_camera` uses one

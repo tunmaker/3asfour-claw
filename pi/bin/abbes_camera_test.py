@@ -97,5 +97,34 @@ check("a good frame clears the wedge", not p.wedged)
 check("frame url derives from the turn url",
       frame_url("http://h:18790/turn") == "http://h:18790/vision/frame")
 
+# A wedge must outlive the process. Holding the count in memory alone is what
+# let a loop restarting every 38s hammer a dead camera forever: it never once
+# reached wedge_after, so the back-off could not engage.
+import tempfile
+tmp = pathlib.Path(tempfile.mkdtemp()) / "nested" / "failures"
+
+p1 = poller([], wedge_after=3, state=str(tmp))
+pump(p1, 3)
+check("failures are written to the state file, parents created",
+      tmp.read_text().strip() == str(p1.consecutive_failures) and p1.consecutive_failures >= 3)
+check("and that is a wedge", p1.wedged)
+
+p2 = poller([], wedge_after=3, state=str(tmp))
+check("a fresh poller starts already wedged, as a restart would",
+      p2.wedged and p2.consecutive_failures == p1.consecutive_failures)
+
+p3 = poller([b"a frame"], wedge_after=3, state=str(tmp))
+pump(p3, 0)
+check("a good frame clears the file too", tmp.read_text().strip() == "0" and not p3.wedged)
+
+p4 = poller([], wedge_after=3, state="/proc/nope/cannot/write")
+pump(p4, 3)
+check("an unwritable state path is not fatal", p4.wedged)
+
+check("a corrupt state file reads as zero",
+      (tmp.write_text("banana"), poller([], wedge_after=3, state=str(tmp)).consecutive_failures)[1] == 0)
+
+check("no state path still works", poller([], wedge_after=2).consecutive_failures == 0)
+
 print(f"\n{'FAILED: ' + ', '.join(FAILS) if FAILS else 'all checks passed'}")
 sys.exit(1 if FAILS else 0)

@@ -74,7 +74,7 @@ class CameraPoller:
 
     def __init__(self, url, camera, interval=3.0, log=lambda *a: None,
                  timeout=30, wedge_after=10, wedge_interval=300.0,
-                 repair=None, idle=None):
+                 repair=None, idle=None, state=None):
         self.url = url
         self.camera = camera
         self.interval = interval
@@ -89,9 +89,30 @@ class CameraPoller:
         self.repairs = 0
         self._stop = threading.Event()
         self._thread = None
-        self.consecutive_failures = 0
+        # A wedge outlives the process that noticed it. Holding the count only in
+        # memory meant a loop restarting every 38 seconds never reached
+        # wedge_after at all, so the back-off could not engage and the poller
+        # hammered a dead camera indefinitely -- on the same bus as the
+        # microphone whose failure was causing the restarts.
+        self.state = pathlib.Path(state).expanduser() if state else None
+        self.consecutive_failures = self._load()
         self.sent = 0
         self.changes = 0
+
+    def _load(self):
+        try:
+            return int(self.state.read_text().strip())
+        except (OSError, ValueError, AttributeError):
+            return 0
+
+    def _save(self):
+        if not self.state:
+            return
+        try:
+            self.state.parent.mkdir(parents=True, exist_ok=True)
+            self.state.write_text(str(self.consecutive_failures))
+        except OSError:
+            pass
 
     def start(self):
         self._thread = threading.Thread(target=self._run, name="camera", daemon=True)
@@ -108,6 +129,7 @@ class CameraPoller:
             frame = self.camera.grab()
             if frame is None:
                 self.consecutive_failures += 1
+                self._save()
                 if self.consecutive_failures == self.wedge_after:
                     self.log(f"camera: {self.wedge_after} grabs failed in a row; the "
                              f"device is wedged. Backing off to {self.wedge_interval:g}s "
@@ -118,6 +140,7 @@ class CameraPoller:
                 if self.wedged:
                     self.log("camera: recovered")
                 self.consecutive_failures = 0
+                self._save()
                 self._post(frame)
             interval = self.wedge_interval if self.wedged else self.interval
             self._stop.wait(max(0.0, interval - (time.monotonic() - started)))
