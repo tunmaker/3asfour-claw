@@ -43,25 +43,29 @@ if [ -f "$REPO/systemd/openclaw-gateway.override.conf" ]; then
         "$UNIT_DIR/openclaw-gateway.service.d/override.conf" 644
 fi
 
-# Prompt and skills. USER.md and MEMORY.md are private and never in the repo,
+ORCH_DIR="$HOME/orchestrator"
+mkdir -p "$ORCH_DIR"
+for f in "$REPO"/orchestrator/*.mjs; do
+    case "$(basename "$f")" in *.test.mjs) continue ;; esac
+    install_file "$f" "$ORCH_DIR/$(basename "$f")" 644
+done
+rendered=$(mktemp)
+sed "s|__HOME__|$HOME|g" "$REPO/orchestrator/abbes-orchestrator.service.template" > "$rendered"
+install_file "$rendered" "$UNIT_DIR/abbes-orchestrator.service" 644
+rm -f "$rendered"
+
+# The prompt. USER.md and MEMORY.md are private and never in the repo,
 # so they are left untouched here.
-mkdir -p "$WORKSPACE/skills"
 for f in "$REPO"/abbes/*.md; do
     [ -e "$f" ] || continue
     install_file "$f" "$WORKSPACE/$(basename "$f")" 644
-done
-for d in "$REPO"/abbes/skills/*/; do
-    [ -d "$d" ] || continue
-    name=$(basename "$d")
-    mkdir -p "$WORKSPACE/skills/$name"
-    install_file "$d/SKILL.md" "$WORKSPACE/skills/$name/SKILL.md" 644
 done
 
 if [ "$changed" -gt 0 ]; then
     systemctl --user daemon-reload
     echo "$changed file(s) updated; systemd reloaded."
-    echo "Restart the gateway if the prompt or units changed:"
-    echo "  systemctl --user restart openclaw-gateway"
+    echo "Restart what changed:"
+    echo "  systemctl --user restart openclaw-gateway abbes-orchestrator"
 else
     echo "Already up to date; nothing changed."
 fi

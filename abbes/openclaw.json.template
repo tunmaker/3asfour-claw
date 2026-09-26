@@ -22,7 +22,12 @@
         "fallbacks": []
       },
       "pdfMaxPages": 20,
-      "timeoutSeconds": 900
+      "timeoutSeconds": 900,
+      "skills": [],
+      "skipOptionalBootstrapFiles": [
+        "SOUL.md",
+        "HEARTBEAT.md"
+      ]
     }
   },
   "gateway": {
@@ -267,43 +272,46 @@
       "web_fetch",
       "browser"
     ],
-    "exec": {
-      "mode": "full",
-      "strictInlineEval": true,
-      "backgroundMs": 60000,
-      "pathPrepend": [
-        "/home/openclaw/bin"
-      ]
-    },
-    "fs": {
-      "workspaceOnly": false
-    },
     "elevated": {
       "enabled": false
-    }
+    },
+    "allow": [
+      "grocy__shopping_list_view_tool",
+      "grocy__entity_create_tool",
+      "grocy__shopping_list_remove_tool",
+      "grocy__shopping_list_clear_tool",
+      "grocy__shopping_list_set_amount_tool",
+      "grocy__stock_overview_tool",
+      "grocy__stock_search_tool",
+      "grocy__stock_expiring_tool",
+      "jellyfin__jellyfin_search",
+      "jellyfin__jellyfin_music",
+      "jellyfin__jellyfin_play",
+      "jellyfin__jellyfin_playback_control",
+      "jellyfin__jellyfin_sessions"
+    ]
   },
   "mcp": {
     "servers": {
-      "open-websearch": {
-        "enabled": true,
-        "url": "http://LLAMA_SERVER_IP:3000/mcp",
-        "transport": "streamable-http",
-        "requestTimeoutMs": 120000,
-        "toolFilter": {
-          "exclude": [
-            "fetchCsdnArticle",
-            "fetchJuejinArticle",
-            "fetchLinuxDoArticle"
-          ]
+      "grocy": {
+        "command": "/home/openclaw/.venvs/grocy-mcp/bin/grocy-mcp",
+        "args": [
+          "--transport",
+          "stdio"
+        ]
+      },
+      "jellyfin": {
+        "command": "/home/openclaw/.local/bin/jellyfin-mcp",
+        "args": [
+          "--disable-destructive",
+          "--toolsets",
+          "discovery,media,playback"
+        ],
+        "env": {
+          "JELLYFIN_URL": "CHANGEME",
+          "JELLYFIN_API_KEY": "CHANGEME"
         }
       }
-    }
-  },
-  "skills": {
-    "load": {
-      "extraDirs": [
-        "/home/openclaw/.openclaw/workspace/skills"
-      ]
     }
   },
   "commands": {
