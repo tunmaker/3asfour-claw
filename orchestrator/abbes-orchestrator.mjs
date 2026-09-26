@@ -36,6 +36,7 @@ async function transcribe(wav) {
   const form = new FormData();
   form.append("file", new Blob([wav], { type: "audio/wav" }), "turn.wav");
   form.append("response_format", "json");
+  form.append("prompt", "Abbes,");
   const res = await fetch(STT_URL, { method: "POST", body: form, signal: AbortSignal.timeout(STT_TIMEOUT) });
   if (!res.ok) throw new Error(`stt ${res.status}`);
   const d = await res.json();

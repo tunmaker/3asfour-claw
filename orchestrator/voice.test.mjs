@@ -20,4 +20,9 @@ test("the wake word is dropped only from the front", () => {
   assert.equal(stripName("Tell Abbas I said hi"), "Tell Abbas I said hi");
   assert.equal(stripName("Abbas"), "");
   assert.equal(stripName("Abbey Road by the Beatles"), "Abbey Road by the Beatles");
+  assert.equal(stripName("Ebbes, what can you help me with?"), "what can you help me with?");
+  assert.equal(stripName("Abs, what is on my shopping list?"), "what is on my shopping list?");
+  assert.equal(stripName("Abs workout music please"), "Abs workout music please");
+  assert.equal(stripName("Add eggs to the list"), "Add eggs to the list");
+  assert.equal(stripName("Yes, add milk"), "Yes, add milk");
 });
