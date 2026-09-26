@@ -369,7 +369,7 @@ async function onSceneChange({ present, caption }) {
       `sentence in Modern Standard Arabic and nothing else. If it is not, reply exactly NO_REPLY.`,
     sessionKey: "autonomy",
     name: "vision",
-    model: "llamacpp/qwen3.5-9b-q8-auto",
+    model: "llamacpp/qwen3.8-27b",
     deliver: false,
   };
   try {
@@ -390,12 +390,8 @@ async function onSceneChange({ present, caption }) {
 }
 
 /**
- * Ask Qwen about a frame, on the slot reserved for image prefills.
- *
- * id_slot keeps a 1024-token image out of the voice session's slot, which would
- * otherwise cost that session its cached prefix and turn a 0.09s prefill into
- * a 9s one on the next thing anybody says out loud. Slot 1 is the shared
- * everything-but-voice slot; evicting main's prefix is an accepted cost there.
+ * Ask Qwen about a frame. The server runs a single slot, so an image prefill
+ * evicts whatever session prefix was cached there.
  */
 async function askQwenAboutImage(jpeg, prompt) {
   if (!QWEN_VISION_URL) throw new Error("VISION_QWEN_URL is not set");
@@ -406,8 +402,7 @@ async function askQwenAboutImage(jpeg, prompt) {
       ...(LLAMACPP_KEY ? { authorization: `Bearer ${LLAMACPP_KEY}` } : {}),
     },
     body: JSON.stringify({
-      model: "qwen3.5-9b-q8-vision",
-      id_slot: 1,
+      model: "qwen3.8-27b",
       messages: [{
         role: "user",
         content: [
@@ -532,8 +527,7 @@ const server = http.createServer(async (req, res) => {
     try {
       // The 256M captioner is for the gate, where the question is closed and the
       // cost is paid every few seconds. A person asking what the camera sees
-      // deserves the model that can actually answer, on its own pinned slot so
-      // the image prefill cannot evict the voice session's prefix.
+      // deserves the model that can actually answer.
       const answer = body.quick
         ? await vision.caption(vision.lastFrame, prompt, { maxTokens: 80 })
         : await askQwenAboutImage(vision.lastFrame, prompt);
@@ -687,14 +681,12 @@ async function warmup() {
   log(`warmed http stack in ${Date.now() - t}ms`);
 }
 
-// The default model moved to the shared slot-1 lane; the voice session is the
-// one thing that must stay on slot 0, so pin its model explicitly. sessions.patch
-// persists on the session entry and survives gateway restarts, but not a session
-// reset, hence on every orchestrator start rather than once ever.
+// sessions.patch persists on the session entry and survives gateway restarts,
+// so re-pin on every start to overwrite any model a past config left there.
 async function pinVoiceModel() {
   try {
-    await gw.call("sessions.patch", { key: SESSION_KEY, model: "llamacpp/qwen3.5-9b-q8" });
-    log("voice session pinned to llamacpp/qwen3.5-9b-q8 (slot 0)");
+    await gw.call("sessions.patch", { key: SESSION_KEY, model: "llamacpp/qwen3.8-27b" });
+    log("voice session pinned to llamacpp/qwen3.8-27b");
   } catch (e) {
     log("could not pin the voice model:", e.message);
   }

@@ -11,10 +11,9 @@
 # newest one is seconds old at worst and asking for another would add latency
 # for nothing. "Take a picture" is answered from that.
 #
-# Full answers go to Qwen with its projector, on the slot reserved for image
-# prefills so that a 1024-token image cannot evict the voice session's cached
-# prefix. --quick uses the small captioner instead, which is for the presence
-# gate and describes furniture adequately and little else.
+# Full answers go to Qwen with its projector. --quick uses the small captioner
+# instead, which is for the presence gate and describes furniture adequately
+# and little else.
 #
 # --photo saves the frame under $ABBES_CAMERA_DIR (default ~/.openclaw/camera)
 # and prints "MEDIA:<path>" for the model to copy verbatim into its reply.
