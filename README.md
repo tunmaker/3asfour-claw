@@ -33,9 +33,11 @@ whisper, Piper and the model run on the inference host
 
 ## Tools
 
-The agent has two MCP servers and nothing else: **grocy** for the shopping list
-and pantry, and **jellyfin** for music on the Pi speaker. The allowlist is
-`tools.allow` in the config; there is no exec and no filesystem access.
+Three MCP servers: **grocy** for the shopping list and pantry, **jellyfin** for
+music on the Pi speaker, and **open-websearch** (self-hosted on the inference
+host) for the web. Plus OpenClaw's own memory tools, and `write`/`edit` confined
+to the workspace so memory notes can be kept. The allowlist is `tools.allow` in
+the config; there is no exec.
 
 ## Setup
 

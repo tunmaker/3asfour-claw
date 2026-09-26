@@ -15,7 +15,8 @@ so services start at boot without a login.
 | `abbes-backup.timer` | Nightly data backup |
 
 Inference runs on a separate machine on the LAN: the chat model, whisper
-(speech-to-text), Piper (text-to-speech) and embeddings. Every address is
+(speech-to-text), Piper (text-to-speech), embeddings for memory search, and the
+open-websearch MCP server. Every address is
 configured, not hardcoded.
 
 ## 2. Configuration
@@ -56,9 +57,12 @@ The prompt is `abbes/AGENTS.md` and `abbes/IDENTITY.md`, plus the private
 default SOUL.md and HEARTBEAT.md are not created. The whole system prompt with
 tools is about 5,300 tokens.
 
-Tools are an explicit allowlist (`tools.allow`) of grocy and jellyfin MCP tools.
-There is no exec, no filesystem and no web access. Adding a tool means adding it
-to that list and to AGENTS.md.
+Tools are an explicit allowlist (`tools.allow`): the grocy, jellyfin and
+open-websearch MCP tools, `memory_search`/`memory_get`, and `write`/`edit`
+restricted to the workspace (`tools.fs.workspaceOnly`). There is no exec, and the
+built-in web providers stay denied: search goes through the self-hosted
+open-websearch server only. Adding a tool means adding it to that list and to
+AGENTS.md.
 
 Voice turns reach the model prefixed `[voice]`, which is how AGENTS.md keeps
 spoken replies short and free of markdown.
@@ -100,7 +104,8 @@ hand from `.env.example`.
 ## 8. Security model
 
 - No cloud AI provider. The model catalogue resolves to a single local model.
-- The agent can call only the allowlisted grocy and jellyfin tools.
+- The agent can call only the allowlisted tools; its only writes land in its own
+  workspace, and its only internet access is the self-hosted search server.
 - One chat channel: WhatsApp, via the `@openclaw/whatsapp` plugin in self-chat
   mode. DMs and groups are allowlist-only; numbers live in the host config.
 - The gateway and the orchestrator bind loopback; the Pi reaches both over an SSH

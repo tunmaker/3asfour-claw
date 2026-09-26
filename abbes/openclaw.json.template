@@ -276,6 +276,13 @@
       "enabled": false
     },
     "allow": [
+      "memory_search",
+      "memory_get",
+      "write",
+      "edit",
+      "open-websearch__search",
+      "open-websearch__fetchWebContent",
+      "open-websearch__fetchGithubReadme",
       "grocy__shopping_list_view_tool",
       "grocy__entity_create_tool",
       "grocy__shopping_list_remove_tool",
@@ -289,10 +296,26 @@
       "jellyfin__jellyfin_play",
       "jellyfin__jellyfin_playback_control",
       "jellyfin__jellyfin_sessions"
-    ]
+    ],
+    "fs": {
+      "workspaceOnly": true
+    }
   },
   "mcp": {
     "servers": {
+      "open-websearch": {
+        "enabled": true,
+        "url": "http://LLAMA_SERVER_IP:3000/mcp",
+        "transport": "streamable-http",
+        "requestTimeoutMs": 120000,
+        "toolFilter": {
+          "exclude": [
+            "fetchCsdnArticle",
+            "fetchJuejinArticle",
+            "fetchLinuxDoArticle"
+          ]
+        }
+      },
       "grocy": {
         "command": "/home/openclaw/.venvs/grocy-mcp/bin/grocy-mcp",
         "args": [

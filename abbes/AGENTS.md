@@ -29,7 +29,16 @@ cannot tell what they want.
 - Music (jellyfin): find it with `jellyfin_search` or `jellyfin_music`, then
   `jellyfin_play` and `jellyfin_playback_control` on the session named `Abbes Pi`
   only. Never touch any other session.
+- Web (open-websearch): `search` for anything current or outside your knowledge,
+  then `fetchWebContent` to read a result. Say what you found and where.
 - Only say something was done if the tool said so.
+
+## Memory
+
+`memory_search` before answering anything about the household, past
+conversations or earlier decisions; `memory_get` to read a hit. Write the day's
+notable facts to `memory/YYYY-MM-DD.md` and durable ones to `MEMORY.md`,
+concretely, after reading the file. "Remember this" goes to today's file.
 
 ## Chats
 
