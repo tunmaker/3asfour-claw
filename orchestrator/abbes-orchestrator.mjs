@@ -10,7 +10,7 @@
 import http from "node:http";
 import { GatewayClient } from "./gateway-client.mjs";
 import { Chunker } from "./sentences.mjs";
-import { cleanTranscript, stripName } from "./transcript.mjs";
+import { SpokenFilter, cleanTranscript, stripName } from "./transcript.mjs";
 
 const PORT        = +(process.env.ABBES_ORCH_PORT || 18790);
 const GW_URL      = process.env.GW_URL || "ws://127.0.0.1:18789";
@@ -18,7 +18,7 @@ const ENV_FILE    = process.env.OPENCLAW_ENV || `${process.env.HOME}/.openclaw/o
 const STT_URL     = process.env.STT_URL || required("STT_URL");
 const TTS_URL     = process.env.TTS_URL || required("TTS_URL");
 const SESSION_KEY = process.env.ABBES_SESSION_KEY || "agent:main:voice";
-const VOICE       = process.env.PIPER_VOICE || "en_US-lessac-medium";
+const VOICE       = process.env.PIPER_VOICE || "en_US-ryan-medium";
 const STT_TIMEOUT = +(process.env.STT_TIMEOUT_MS || 30000);
 const TTS_TIMEOUT = +(process.env.TTS_TIMEOUT_MS || 15000);
 const IDLE_RESET  = +(process.env.ABBES_VOICE_IDLE_RESET_MS || 30 * 60 * 1000);
@@ -32,16 +32,35 @@ function required(name) {
 
 const log = (...a) => console.log(`[${new Date().toISOString().slice(11, 23)}]`, ...a);
 
-async function transcribe(wav) {
+// The household speaks English, French and Tunisian Derja. Whisper's detector
+// files a Derja accent under Persian or Urdu as often as Arabic, so anything
+// outside those three is re-run as the likeliest of them. Arabic gets a second
+// pass primed with Derja words, which pulls the spelling toward the dialect.
+const LANGS = { english: "en", french: "fr", arabic: "ar" };
+const DERJA_PROMPT = process.env.WHISPER_PROMPT_AR ||
+  "عباس، شنوة، علاش، برشا، شوية، باهي، توة، قداش، وقتاش، فمّا، نحب، تنجم، زيد، نقص، ياسر، مزيان";
+
+async function whisper(wav, fields) {
   const form = new FormData();
   form.append("file", new Blob([wav], { type: "audio/wav" }), "turn.wav");
-  form.append("response_format", "json");
-  form.append("prompt", "Abbes,");
+  for (const [k, v] of Object.entries(fields)) form.append(k, v);
   const res = await fetch(STT_URL, { method: "POST", body: form, signal: AbortSignal.timeout(STT_TIMEOUT) });
   if (!res.ok) throw new Error(`stt ${res.status}`);
   const d = await res.json();
   if (d.error) throw new Error(`stt: ${d.error}`);
-  return (d.text || "").trim();
+  return d;
+}
+
+async function transcribe(wav) {
+  const first = await whisper(wav, { response_format: "verbose_json", prompt: "Abbes," });
+  const detected = first.detected_language || first.language || "";
+  const probs = first.language_probabilities || {};
+  const lang = LANGS[detected] ? detected
+    : Object.keys(LANGS).sort((a, b) => (probs[b] || 0) - (probs[a] || 0))[0];
+  if (lang === detected && lang !== "arabic") return { text: (first.text || "").trim(), lang: LANGS[lang] };
+  const prompt = lang === "arabic" ? DERJA_PROMPT : "Abbes,";
+  const again = await whisper(wav, { response_format: "json", language: LANGS[lang], prompt });
+  return { text: (again.text || "").trim(), lang: LANGS[lang], detected };
 }
 
 async function synthesize(text) {
@@ -73,17 +92,17 @@ async function runTurn(wav, { onTranscript, onAudio }) {
   const t0 = Date.now();
   const marks = {};
 
-  const heard = cleanTranscript(await transcribe(wav));
+  const stt = await transcribe(wav);
+  const heard = cleanTranscript(stt.text);
   const request = stripName(heard);
   marks.sttMs = Date.now() - t0;
-  log(`heard: ${JSON.stringify(heard)}`);
+  log(`heard (${stt.lang}${stt.detected && stt.detected !== "arabic" ? `, detected ${stt.detected}` : ""}): ${JSON.stringify(heard)}`);
   onTranscript(request);
   if (!request) return { transcript: "", reply: "", marks };
 
   let queue = Promise.resolve();
   let index = 0;
   const speak = (sentence) => {
-    if (sentence.trimStart().startsWith("⚠")) return;
     queue = queue.then(async () => {
       const audio = await synthesize(sentence);
       if (marks.firstAudioMs === undefined) marks.firstAudioMs = Date.now() - t0;
@@ -92,15 +111,12 @@ async function runTurn(wav, { onTranscript, onAudio }) {
   };
 
   await maybeResetSession();
-  const chunker = new Chunker();
+  const spoken = new SpokenFilter(Chunker, speak);
   const turn = await gw.sendTurn(SESSION_KEY, `[voice] ${request}`, {
-    onDelta: (delta, full, replaced) => {
-      if (replaced) { chunker.replace(full); return; }
-      for (const s of chunker.push(delta)) speak(s);
-    },
-    onToolStart: (name) => log(`  tool: ${name}`),
+    onDelta: (delta, _full, replaced) => { if (!replaced) spoken.push(delta); },
+    onToolStart: (name) => { spoken.endParagraph(); log(`  tool: ${name}`); },
   });
-  for (const s of chunker.end()) speak(s);
+  spoken.end();
   lastTurnAt = Date.now();
   await queue;
 

@@ -26,3 +26,35 @@ test("the wake word is dropped only from the front", () => {
   assert.equal(stripName("Add eggs to the list"), "Add eggs to the list");
   assert.equal(stripName("Yes, add milk"), "Yes, add milk");
 });
+
+import { SpokenFilter, speakable } from "./transcript.mjs";
+import { Chunker } from "./sentences.mjs";
+
+function spoken(deltas, toolAfter = -1) {
+  const out = [];
+  const f = new SpokenFilter(Chunker, (s) => out.push(s));
+  deltas.forEach((d, i) => { f.push(d); if (i === toolAfter) f.endParagraph(); });
+  f.end();
+  return out.join(" ");
+}
+
+test("the Arabic wake word and its vocative are dropped", () => {
+  assert.equal(stripName("يا عباس، شنوة الوقت؟"), "شنوة الوقت؟");
+  assert.equal(stripName("عبّاس زيد الصوت"), "زيد الصوت");
+  assert.equal(stripName("شنوة الوقت؟"), "شنوة الوقت؟");
+});
+
+test("thinking out loud is not spoken, the answer is", () => {
+  assert.equal(spoken(["The user said hello in a voice message. ", "It is just a greeting.\n\n", "Hi, how can I help?"]),
+    "Hi, how can I help?");
+  assert.equal(spoken(["Let me check the ", "shopping list first."], 1), "");
+  assert.equal(spoken(["Sure. ", "I added milk to the list."]), "Sure. I added milk to the list.");
+  assert.equal(spoken(["Okay, so the user wants music.\n\nPlaying jazz on the speaker now."]),
+    "Playing jazz on the speaker now.");
+});
+
+test("Arabic script is never handed to the English voice", () => {
+  assert.equal(speakable("You said \"شنوة\", which means what."), "You said , which means what.");
+  assert.equal(speakable("شنوة الوقت؟"), "");
+  assert.equal(speakable("⚠ tool failed"), "");
+});

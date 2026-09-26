@@ -13,8 +13,8 @@ export function cleanTranscript(text) {
 // however whisper heard it: Abbes, Abbas, Abès, Ebbes, Abs, EBS. The exact name is
 // always dropped; a near miss only when punctuation follows it, which is how whisper
 // writes a vocative, so "Abbey Road" or "Abs workout" survive.
-const NAMES = ["abbes", "abbas"];
-const LEAD = /^\s*(?:(?:hey|ok|okay)[\s,]+)?([\p{L}'’]+)([\s,.!?]*)/iu;
+const NAMES = ["abbes", "abbas", "عباس"];
+const LEAD = /^\s*(?:(?:hey|ok|okay|يا)[\s,،]+)?([\p{L}\p{M}'’]+)([\s,.!?،؟]*)/iu;
 
 function distance(a, b) {
   const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
@@ -30,9 +30,81 @@ function distance(a, b) {
 export function stripName(text) {
   const m = text.match(LEAD);
   if (!m) return text.trim();
-  const word = m[1].normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const word = m[1].normalize("NFD").replace(/[\u0300-\u036f\u064B-\u065F]/g, "").toLowerCase();
   const near = Math.min(...NAMES.map((n) => distance(word, n)));
-  const punctuated = /[,.!?]/.test(m[2]) || m[0].length === text.length;
+  const punctuated = /[,.!?،؟]/.test(m[2]) || m[0].length === text.length;
   if (word.length >= 3 && (near === 0 || (near <= 2 && punctuated))) return text.slice(m[0].length).trim();
   return text.trim();
+}
+
+// The model sometimes thinks out loud in plain text -- "The user said ...",
+// "Let me try to parse it" -- before answering or calling a tool. A paragraph that
+// opens like that is reasoning and is not spoken; the rest streams as it arrives.
+const REASONING = new RegExp("^\\s*(?:(?:okay|ok|so|hmm|alright|well),?\\s+)*(?:" + [
+  "the user", "user['’]s", "the (?:voice )?message", "this (?:is|was|looks|seems)",
+  "it['’]s (?:just|not|a)", "let me", "let['’]s", "i (?:should|need to|will|['’]ll|must|think|can see)",
+  "since (?:this|the)", "looking at", "the (?:transcript|audio|request)", "they (?:said|want|are|asked)",
+].join("|") + ")", "i");
+const ARABIC = /[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]+/g;
+
+export function isReasoning(text) {
+  return REASONING.test(text);
+}
+
+// The voice is English; Arabic script would be spelled out letter by letter.
+export function speakable(sentence) {
+  const clean = sentence.replace(ARABIC, " ").replace(/["“”«»]\s*["“”«»]/g, "").replace(/\s+/g, " ").trim();
+  return /[\p{L}\p{N}]/u.test(clean) && !clean.startsWith("⚠") ? clean : "";
+}
+
+export class SpokenFilter {
+  constructor(Chunker, emit) {
+    this.Chunker = Chunker;
+    this.emit = emit;
+    this.startParagraph();
+  }
+
+  startParagraph() {
+    this.chunker = new this.Chunker();
+    this.pending = "";
+    this.mode = "undecided";
+  }
+
+  push(delta) {
+    const pieces = delta.split(/\n\s*\n/);
+    pieces.forEach((piece, i) => {
+      if (i > 0) this.endParagraph();
+      this.feed(piece);
+    });
+  }
+
+  feed(text) {
+    if (this.mode === "drop" || !text) return;
+    if (this.mode === "speak") { this.say(this.chunker.push(text)); return; }
+    this.pending += text;
+    if (/[.!?:](?:\s|$)/.test(this.pending) || this.pending.length > 120) this.decide();
+  }
+
+  decide() {
+    this.mode = isReasoning(this.pending) ? "drop" : "speak";
+    if (this.mode === "speak") this.say(this.chunker.push(this.pending));
+    this.pending = "";
+  }
+
+  say(sentences) {
+    for (const s of sentences) {
+      const clean = speakable(s);
+      if (clean) this.emit(clean);
+    }
+  }
+
+  endParagraph() {
+    if (this.mode === "undecided" && this.pending.trim()) this.decide();
+    if (this.mode === "speak") this.say(this.chunker.end());
+    this.startParagraph();
+  }
+
+  end() {
+    this.endParagraph();
+  }
 }
