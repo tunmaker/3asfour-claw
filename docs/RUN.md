@@ -10,12 +10,12 @@ so services start at boot without a login.
 | Unit | Purpose |
 |---|---|
 | `openclaw-gateway.service` | The agent and its Control UI |
-| `radicale.service` | CalDAV calendar |
+| `abbes-orchestrator.service` | The voice path: whisper -> gateway -> Piper, on `127.0.0.1:18790` |
+| `radicale.service` | CalDAV calendar (a data service; the agent has no calendar tool) |
 | `abbes-backup.timer` | Nightly data backup |
 
-Inference is provided by a separate machine on the LAN and is never bundled here:
-an OpenAI-compatible chat endpoint, a speech-to-text endpoint, an embedding
-endpoint for memory search, and a search MCP server. All four addresses are
+Inference runs on a separate machine on the LAN: the chat model, whisper
+(speech-to-text), Piper (text-to-speech) and embeddings. Every address is
 configured, not hardcoded.
 
 ## 2. Configuration
@@ -23,201 +23,117 @@ configured, not hardcoded.
 Two files, neither of them in this repository:
 
 - `~/.openclaw/openclaw.json` — agent configuration. Start from
-  `abbes/openclaw.json.template` and replace `LLAMA_SERVER_IP` with the address of
-  your inference host.
-- `~/.openclaw/openclaw.env` — secrets and site paths, mode 600. Start from
+  `abbes/openclaw.json.template`.
+- `~/.openclaw/openclaw.env` — secrets and endpoints, mode 600. Start from
   `.env.example`.
-
-Secrets are referenced from the agent config as SecretRef objects, so no
-credential is ever written into a config file in plaintext.
-
-Every site-specific path lives in the env file. The scripts refuse to run rather
-than guessing a default, so a missing variable fails loudly at the first call
-instead of silently writing to the wrong place.
 
 | Variable | Meaning |
 |---|---|
-| `ABBES_VAULT_ROOT` | Root of the Obsidian vault |
-| `ABBES_VAULT_DIR` | The agent's folder inside the vault |
-| `ABBES_VAULT_MOUNT` | Mountpoint that must be live before any vault write |
+| `WHISPER_URL` | whisper-server `/inference` endpoint |
+| `PIPER_URL` | Piper server |
 | `ABBES_DATA_DIR` | Local runtime data (default `/var/lib/abbes`) |
 | `ABBES_BACKUP_DEST` | Backup destination |
 | `ABBES_BACKUP_MOUNT` | Mountpoint that must be live before backing up |
-| `ABBES_SPEAKER_SSH` | `user@host` of the voice satellite |
-| `ABBES_SPEAKER_KEY` | Private key for the satellite's volume forced command |
+
+Change configuration with `openclaw config patch --stdin --dry-run` first; do not
+hand-edit `openclaw.json` while the gateway is running.
 
 ## 3. Access
 
-The Control UI requires a secure browser context. A plain-HTTP origin on a LAN
-address does not qualify, so the gateway binds loopback and is reached over an SSH
-tunnel:
+The Control UI requires a secure browser context, so the gateway binds loopback
+and is reached over an SSH tunnel:
 
 ```bash
 ssh -f -N -L 18789:127.0.0.1:18789 <user>@<host>
 ```
 
-then open `http://127.0.0.1:18789` and supply the gateway token. Because the token
-is a SecretRef, the CLI will not embed it in a URL; paste it once and the browser
-remembers it.
+then open `http://127.0.0.1:18789` and supply the gateway token.
 
-## 4. Agent tools
+## 4. The prompt and the tools
 
-These are the scripts the agent is told about. They are the tools it has a reason
-to run, not a boundary -- see the note on exec policy below.
+The prompt is `abbes/AGENTS.md` and `abbes/IDENTITY.md`, plus the private
+`USER.md` on the host. Bundled skills are off (`skills: []`) and OpenClaw's
+default SOUL.md and HEARTBEAT.md are not created. The whole system prompt with
+tools is about 5,300 tokens.
 
-| Script | Purpose |
+Tools are an explicit allowlist (`tools.allow`) of grocy and jellyfin MCP tools.
+There is no exec, no filesystem and no web access. Adding a tool means adding it
+to that list and to AGENTS.md.
+
+Voice turns reach the model prefixed `[voice]`, which is how AGENTS.md keeps
+spoken replies short and free of markdown.
+
+## 5. Latency
+
+The model generates at about 6 tokens/s, so the reply length is the latency.
+
+| | |
 |---|---|
-| `note-add.sh`, `note-search.sh` | Notes in the vault |
-| grocy (MCP) | Grocery list and pantry, served by the Grocy instance on this host. List-building only — no purchasing capability |
-| jellyfin (MCP) | Music and Qur'an playback from the household Jellyfin server onto the Pi speaker (the `Abbes Pi` player). Search, browse, and playback control only |
-| `calendar.sh` | CalDAV read and write |
-| `baby.sh` | Baby journal: feeds, sleep, diapers, notes. Fills in what was not said and prints what it assumed |
-| `quran.sh` | Read-only retrieval from a local Qur'an text |
-| `prayer.sh`, `weather.sh`, `look.sh` | Prayer times (computed locally), Open-Meteo weather, the camera |
-| `whisper-transcribe.sh` | Speech-to-text |
-| `speaker.sh` | Volume of the agent's own speech on the voice satellite |
+| whisper, short command | ~1.1 s |
+| First audio, warm prompt cache | ~4.5–5 s |
+| First audio, turn that calls a tool | ~20 s |
+| Cold prompt (first turn after a llama-server restart) | ~50 s |
 
-**Exec runs unrestricted (`tools.exec.mode: "full"`).** This is deliberate, and it
-replaced an allowlist that had quietly stopped working.
+llama-server keeps evicted prompts in host RAM (`LLAMA_ARG_CACHE_RAM`), so a cron
+job or another session taking the single slot costs a few seconds, not a cold
+prefill.
 
-The scripts were declared as `tools.exec.safeBins`, which is the wrong mechanism
-for them: safeBins is for stdin-only filters like `jq` and `grep`, and 2026.8.1
-began enforcing that. It requires a `tools.exec.safeBinProfiles.<bin>` entry per
-binary, refuses a `safeBinTrustedDirs` entry that is group-writable, and validates
-each argument -- rejecting anything containing a slash or a glob character, and
-offering no way to declare a boolean long flag such as `calendar.sh --iso`
-(the profile schema is strict and has only `minPositional`, `maxPositional`,
-`allowedValueFlags`, `deniedFlags`). Free-form Arabic note text and place names do
-not survive that. Every tool call failed with `exec denied: allowlist miss` for as
-long as it took to notice.
-
-So the containment is no longer in the exec policy, and pretending otherwise would
-be worse than not having it. What actually contains this agent:
-
-- It runs in a container, on a LAN, with no cloud provider and no network tools.
-- Vault write access is a filesystem permission, not an instruction.
-- `speaker.sh` reaches the satellite through a `restrict,command=` SSH key that can
-  only adjust volume.
-
-Restoring a real allowlist means per-script `safeBinProfiles` plus `chmod 755` on
-`~/bin`, and accepting that arguments with slashes will be refused.
-
-Two design rules matter, because the model will otherwise report success it did not
-achieve:
-
-- Write tools print the record they stored and verify it after writing, so the
-  agent quotes back what is really on disk.
-- `quran.sh` only ever prints text found in the source file. A verse that cannot be
-  retrieved is refused, never approximated.
-
-## 5. Data and storage
+## 6. Data and storage
 
 | Location | Contents |
 |---|---|
-| `$ABBES_VAULT_DIR` | Notes — the single source of truth |
 | `/var/www/grocy/data/` | Grocy database (groceries and pantry) |
-| `$ABBES_DATA_DIR/babylog/journal.jsonl` | Baby journal, append-only, one event per line |
-| `$ABBES_DATA_DIR/reference/quran/` | Qur'an text, if installed |
-| `~/.openclaw/workspace/` | System prompt, identity, memory |
+| `~/.openclaw/workspace/` | Prompt, identity, memory |
 | `~/.local/share/radicale/` | Calendar events |
 
-**No runtime data is stored inside this repository.** The working tree contains
-only code, configuration templates, and documentation.
+**No runtime data is stored inside this repository.**
 
-The Qur'an text is not distributed here. Install a plain-text Uthmani source at
-`$ABBES_DATA_DIR/reference/quran/quran-uthmani.txt`, read-only. Until then
-`quran.sh` refuses every request, which is the intended failure mode.
+## 7. Backups
 
-## 6. Backups
-
-`abbes-backup.timer` runs nightly and copies the baby log, workspace, calendar
-collections, and agent config to `$ABBES_BACKUP_DEST`, plus a dated tarball kept 30
-days. If the destination is not mounted it exits 75 without writing anything.
+`abbes-backup.timer` runs nightly and copies the workspace, calendar collections,
+and agent config to `$ABBES_BACKUP_DEST`, plus a dated tarball kept 30 days. If
+the destination is not mounted it exits 75 without writing anything.
 
 `openclaw.env` is deliberately excluded, so a rebuild needs that file recreated by
 hand from `.env.example`.
 
-Restore has not been exercised end to end; treat the first restore as an untested
-path.
+## 8. Security model
 
-## 7. Security model
+- No cloud AI provider. The model catalogue resolves to a single local model.
+- The agent can call only the allowlisted grocy and jellyfin tools.
+- One chat channel: WhatsApp, via the `@openclaw/whatsapp` plugin in self-chat
+  mode. DMs and groups are allowlist-only; numbers live in the host config.
+- The gateway and the orchestrator bind loopback; the Pi reaches both over an SSH
+  tunnel.
 
-- No cloud AI provider. The model catalogue resolves to a single local model, and
-  the configuration uses replace semantics so unconfigured providers cannot appear.
-- Web search and browser tools are denied for the agent.
-- One chat channel: WhatsApp, via the external `@openclaw/whatsapp` plugin
-  (Baileys, QR-linked to the household's personal number in self-chat mode:
-  Abbes answers in the "message yourself" chat). DMs are allowlist-only, keyed
-  off the linked number; the number lives in the host config, never here.
-  Groups are allowlist-only and the allowlist is empty. Keep the plugin version
-  matched to the runtime: the plugin's peer range is enforced at install time.
-- Exec is unrestricted (`mode: "full"`). See section 4 for why, and for what
-  carries the containment instead.
-- The gateway binds loopback and is reached over SSH.
-- The agent's write access to the vault is enforced by filesystem permissions, not
-  by instructions in the prompt: it can read the vault and write only inside its own
-  folder.
-- Reaching the voice satellite is enforced the same way. `speaker.sh` uses a key
-  whose `authorized_keys` entry is `restrict,command="/usr/local/bin/abbes-volume"`,
-  so that key can only adjust the speaker volume: it gets no shell, no pty and no
-  forwarding, and the command itself pattern-matches every argument before it
-  reaches `pactl`.
-
-Assume the model is susceptible to prompt injection from any text it ingests. With
-exec unrestricted, the mitigations that remain are the container boundary, the
-absence of any network-reaching tool, and the filesystem permissions above. Anything
-that would widen those -- enabling web fetch, mounting the vault writable, giving the
-satellite key a shell -- is a bigger decision than it looks.
-
-## 8. Common operations
-
-The gateway unit runs with `PrivateTmp=true`: a command the agent runs through
-`exec` sees a different `/tmp` than your shell does. When debugging a tool from
-the agent side, write its logs under `$HOME`, not `/tmp`, or they will appear to
-vanish.
-
-A tool script must not `exec` into a program that closes inherited file
-descriptors (OpenSSH does). The exec supervisor watches an inherited pipe to
-know the command tree is alive, and treats its early close as the tree having
-died: the group is SIGTERMed 100ms later. Run such programs as a child of the
-script instead. `speaker.sh` is the worked example.
+## 9. Common operations
 
 ```bash
-systemctl --user status openclaw-gateway
-journalctl --user -u openclaw-gateway -f
+systemctl --user status openclaw-gateway abbes-orchestrator
+journalctl --user -u abbes-orchestrator -f     # one line per voice turn, with timings
 
 openclaw config validate
 openclaw models list          # expect exactly one, local
 openclaw doctor
-openclaw security audit
-openclaw memory index --force # after editing workspace documents
 ```
 
-Change configuration with `openclaw config patch --stdin --dry-run` first; do not
-hand-edit `openclaw.json` while the gateway is running.
+## 10. MCP servers (host-only setup)
 
-## 9. MCP servers (host-only setup)
-
-Three MCP servers are registered in `mcp.servers` with `openclaw mcp add`; none
-of it lives in a deploy script, so it is recorded here.
+Registered in `mcp.servers` with `openclaw mcp add`; recorded here because no
+deploy script creates them.
 
 - **grocy** — `~/.venvs/grocy-mcp/bin/grocy-mcp` (stdio). Grocy itself runs on
-  this host: nginx + PHP 8.5-FPM (Sury PPA) serving `/var/www/grocy`, SQLite in
-  `/var/www/grocy/data/`. API key in `~/.config/grocy-mcp/config.toml` (mode
-  600). Tool set trimmed with `openclaw mcp configure grocy --include ...`.
+  this host: nginx + PHP-FPM serving `/var/www/grocy`, SQLite in
+  `/var/www/grocy/data/`. API key in `~/.config/grocy-mcp/config.toml` (mode 600).
 - **jellyfin** — `~/.local/bin/jellyfin-mcp` (stdio, official binary),
   `--disable-destructive --toolsets discovery,media,playback`. `JELLYFIN_URL`
-  and `JELLYFIN_API_KEY` are set as env on the server entry. The library server
-  is a separate host (`<jellyfin-host>:8096`, plain HTTP on the LAN).
-- Playback lands on the Pi: `jellyfin-mpv-shim` (venv) runs as the user service
-  `jellyfin-mpv-shim` on **voicepi**, registered in Jellyfin as the player
-  **Abbes Pi**. It is logged in as a dedicated non-admin Jellyfin user `abbes`
-  (not a household member's account); `~/.config/jellyfin-mpv-shim/mpv.conf`
-  pins `vo=null` (headless) and the USB speakerphone sink, the same speaker the
-  voice path uses. **That sink name is pinned in three places** — this file,
-  `voicepi.env` (`SPEAKER_SINK`), and `mpv.conf` — so changing the speaker means
-  changing all three. Missing the `mpv.conf` one is silent: speech moves to the
-  new device and music keeps playing to a sink nobody can hear.
+  and `JELLYFIN_API_KEY` are set as env on the server entry.
+- Playback lands on the Pi: `jellyfin-mpv-shim` runs as a user service on the
+  voice satellite, registered in Jellyfin as the player **Abbes Pi**, logged in as
+  a dedicated non-admin Jellyfin user. `~/.config/jellyfin-mpv-shim/mpv.conf`
+  pins `vo=null` and the speakerphone sink. **That sink name is pinned in two
+  places** — `voicepi.env` (`SPEAKER_SINK`) and `mpv.conf` — so changing the
+  speaker means changing both, or music keeps playing to a sink nobody can hear.
 
 After changing any server's config: `openclaw mcp reload`, then restart the
 gateway. `openclaw mcp probe <name>` lists the live tool count.

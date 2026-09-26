@@ -1,41 +1,59 @@
 # pi/ — the voice satellite
 
-Scripts that run on the Raspberry Pi that carries audio between the household and
-Abbes. The Pi does nothing else: record, transcribe, ask the gateway, speak.
+The Raspberry Pi in the room. It listens for the name, records the request, sends
+it to the orchestrator and plays the reply. Speech-to-text, the model and
+text-to-speech all run elsewhere.
 
 Everything here is committed and safe to publish. No hostnames, no IPs, no
-tokens — the private values live in a gitignored `.env` on the Pi.
+tokens — the private values live in `~/.config/voicepi/voicepi.env` on the Pi.
 
 ## Layout
 
 | Path | What it does |
 |---|---|
-| `bin/pi-recon.sh` | Prints host, audio devices, audio server, and output routing. Read-only. |
-| `bin/audio-stack-install.sh` | Installs PipeWire + WirePlumber and configures them for a headless host. |
-| `bin/abbes-camera-reset.sh` | Unwedges the USB webcam. See the camera note below. |
-| `bin/vosk-install.sh` | Installs Vosk in a venv and downloads one small offline model. |
-| `bin/abbes_wake.py` | Wake-word detector. Importable, and runnable standalone with `--listen`. |
-| `bin/abbes_audio.py` | The single shared microphone stream, its pre-roll ring buffer, and level metering. |
-| `bin/abbes_config.py` | Reads `~/.config/voicepi/voicepi.env` for every script. |
-| `bin/wake-listen.sh` | Runs the detector on its own for debugging. |
-| `bin/wake-tally.sh` | Summarises recorded trigger times, for judging false positives. |
-| `wake-decoys.txt` | Competing words for the wake grammar. Install to `~/.config/voicepi/`. |
-| `bin/abbes-volume` | Speaker volume, as an SSH forced command. Install to `/usr/local/bin`. |
-| `bin/mic-level.sh` | Live microphone meter, for setting the VAD and gate thresholds. |
+| `bin/abbes-loop.py` | The loop, run as `abbes-loop.service` |
+| `bin/abbes_wake.py`, `bin/abbes_match.py` | Wake-word detector (Vosk) and name matcher |
+| `bin/abbes_audio.py` | The single shared microphone stream and its pre-roll buffer |
+| `bin/abbes_stream.py` | Sends a recording to the orchestrator and plays the streamed reply |
+| `bin/abbes_config.py` | Reads `voicepi.env` for every script |
+| `bin/vosk-install.sh` | Installs Vosk in a venv and downloads the wake-word model |
+| `bin/audio-stack-install.sh`, `bin/abbes-audio-setup.sh` | PipeWire for a headless host; sink and volume at boot |
+| `bin/abbes-audio-unwedge.sh` | Rebinds the USB controller (see the hardware notes) |
+| `bin/mic-level.sh`, `bin/wake-listen.sh`, `bin/wake-tally.sh` | Debugging: live levels, the detector alone, trigger counts |
+| `wake-decoys.txt` | Competing words for the wake grammar. Install to `~/.config/voicepi/` |
+| `systemd/` | `abbes-loop`, `abbes-audio`, and `openclaw-tunnel` (the SSH tunnel to the gateway host) |
 
 ## Running
 
-Run over SSH from a checkout:
-
-    ssh PI 'bash -s' < pi/bin/pi-recon.sh
-    ssh PI 'bash -s' < pi/bin/audio-stack-install.sh
-
-The loop is no longer a single file — `abbes-loop.py` imports `abbes_wake`,
-`abbes_audio` and `abbes_config` from the same directory — so copy them together
-rather than piping one over stdin:
+Copy the scripts together; the loop imports its siblings:
 
     scp pi/bin/*.py pi/bin/*.sh PI:bin/
     scp pi/wake-decoys.txt PI:.config/voicepi/
+    ssh PI systemctl --user restart abbes-loop
+
+Logs: `journalctl --user-unit=abbes-loop -f` (see *Debugging* for why not `--user -u`).
+
+## The loop
+
+    name heard -> tone -> record until silence -> orchestrator -> play each sentence as it arrives
+
+- **The tone means "listening".** Start talking within `VAD_START_SECS` (8 s).
+  Recording stops after `VAD_SILENCE_SECS` of quiet, or at `VAD_MAX_SECS`.
+- **One breath works too.** The second of audio before the trigger is kept, so
+  "Abbes, add milk" is not clipped; the orchestrator strips the name.
+- **Follow-ups need no name** for `WAKE_FOLLOWUP_SECS` (8 s) after a reply.
+  Anything said in that window is a request, so keep it short in a noisy room.
+- **Failure is a low two-note tone** — the orchestrator was unreachable, or the
+  agent produced nothing. Silence after the listening tone means nothing was heard.
+- **Manual trigger:** `echo go > $XDG_RUNTIME_DIR/abbes-trigger`. `--once` runs a
+  single turn in the foreground.
+- **Recordings never persist.** The clip is deleted in a `finally`, and startup
+  sweeps any left behind.
+
+Each turn logs what whisper heard, the reply, and the timings:
+
+    HEARD: 'what is on my shopping list?'
+    REPLY: '...'  stt 1063ms first-audio 4899ms total 11782ms
 
 ## Notes on this hardware
 
@@ -49,8 +67,8 @@ microphone at the same instant, peaks at **−48.9 dBFS** — below the room's o
 floor of −45.7. The microphone cannot hear the speaker at all. So the microphone is
 never muted, `WAKE_MUTE_TAIL_SECS` is gone, the acknowledgement tone can play into a
 live microphone without landing in the recording, and **you can interrupt Abbes
-mid-sentence** (see *Barge-in*). If this device is ever swapped for a separate speaker
-and microphone, all four of those have to come back together.
+mid-sentence**. If this device is ever swapped for a separate speaker and microphone,
+muting the microphone during playback has to come back.
 
 **Its microphone is quiet and it is 16 kHz native.** Floor −45.7 dBFS median (−51.9
 min, −31.0 peak) against speech around −20. The webcam microphone it replaced floored
@@ -61,7 +79,7 @@ threshold is enough: `VAD_THRESHOLD_DBFS=-36`, `WAKE_GATE_DBFS=-40`, no adaptati
 It also delivers exactly the 16 kHz mono the recogniser wants, so nothing is resampled.
 
 Re-measure both numbers if the device or the room changes — `bin/mic-level.sh`, and the
-echo test is worth repeating on any new speakerphone before trusting barge-in:
+echo test is worth repeating on any new speakerphone:
 
 ```bash
 parecord --device=$MIC --rate=16000 --channels=1 --format=s16le --file-format=wav /tmp/e.wav &
@@ -103,8 +121,7 @@ like an audio fault:
 - A `USBDEVFS_RESET` of the speakerphone did not recover it. Neither did the
   same reset with nothing holding the device. Only a reboot did.
 
-Two things follow. **Poll the camera slowly** — `CAMERA_INTERVAL_SECS=45`; at 5s
-it put enough pressure on that path to wedge it overnight. And **restarting is
+**Restarting is
 not a repair**: a fresh `parecord` on a wedged endpoint is exactly as deaf as
 the old one, which is why the loop backs off to five minutes instead of
 restarting every 38 seconds. It ran 404 times in four hours once, recovering
@@ -143,25 +160,6 @@ shared 12 Mbit bus. It is a diagnostic setting, not a deployment one.
 The honest conclusion is that this speakerphone on a Pi 3B is marginal by
 construction. A Pi 4 or 5 has a real xHCI controller and none of this applies.
 
-**The camera is now only a camera.** It is a separate Sunplus webcam, and the
-microphone no longer lives on it. Ask that device for a frame rate or for YUYV and it
-still drops into EPROTO on every control transfer, which is why `abbes_camera` uses one
-fixed MJPG invocation — but a wedge is now a lost camera, not a deaf assistant.
-
-That distinction cost ninety minutes once. When the device wedged, `parecord` did not
-exit: it stayed alive and delivered nothing, with no journal line, no trigger and no
-error, while every service still reported `active`. One thing from that episode is kept
-because it is still the right guard on any microphone:
-
-- **Silence is timed.** `MicStream` raises `MicGone` after `DEAD_SECS` (30s) with no
-  audio, so systemd restarts the loop instead of leaving it deaf and looking healthy.
-
-Two others were removed with the hardware that justified them: the poller no longer
-runs `abbes-camera-reset.sh` on a wedge, and `MicGone` no longer resets the USB bus on
-the way down. Both existed to rescue a microphone that lived on the camera. Resetting
-the bus now would take down a *working* microphone to repair a camera, which is
-backwards. Polling went from 15s to 5s for the same reason — the grabs are no longer
-competing with hearing.
 
 **Earlier arrangements, for anyone tempted to go back.** Before the speakerphone,
 output was the 3.5mm jack and input was the webcam across the room. Before that it was
@@ -173,96 +171,17 @@ the re-pair needed the speaker in pairing mode, and the adapter wedged partway t
 it advertises A2DP and check `pactl list cards` actually offers `a2dp-sink` before
 believing it works.
 
-## Reaching the other two hosts
+## Reaching the gateway host
 
-Verified from this Pi: the chat endpoint and the embedding endpoint answer over the LAN,
-and a chat round-trip takes about 7s for a short reply.
-
-The **gateway is not reachable from here**. It binds loopback on its own host by design
-(see `docs/RUN.md` §7), so nothing on the LAN can POST to it. The Pi will need an SSH
-tunnel to that host — the gateway itself must not be reconfigured to bind wider.
-
-## Phase 0 status
-
-Both round-trips now work from this Pi.
-
-The **speech-to-text host is an LXC container**, which is what made its failure hard to
-read from inside: `/proc/meminfo` is lxcfs-filtered, so it reports the container's memory
-*limit* as if it were physical RAM, and `journalctl -k` and `dmesg` are empty because a
-container has no kernel log of its own. An out-of-memory kill there is the container's
-cgroup limit being enforced by the LXC host, and the report lands in the *host's* kernel
-log, not the container's. Adding a user to `adm` or `systemd-journal` inside the container
-cannot surface it. Raising the container's swap fixed the kills.
-
-The **gateway is reached over an SSH tunnel** (`openclaw-tunnel.service`), because it
-binds loopback on its own host by design. The tunnel restarts on failure and starts at
-boot. Note that a dead tunnel is indistinguishable from a dead gateway at the HTTP layer,
-so the loop's failure path must cover both.
-
-**Transcription quality over a Bluetooth mic is not usable.** The HFP link is 8kHz CVSD.
-Recorded speech plays back intelligibly to a human, but whisper medium returns
-hallucinations from it — including a repeat-loop on `language=auto`. This is the narrowband
-channel, not the model: a headset profile cannot do better than 8kHz. A USB microphone at
-16kHz is the fix; treat the Bluetooth mic as a fallback for playback-only use.
-
-## Phase 1 — Piper latency on a Pi 3B
-
-Installed via `bin/piper-install.sh` to `~/piper` (~292MB with three voices). Note the
-Debian package named `piper` is a gaming-mouse configurator, not this; and upstream moved
-from `rhasspy/piper` to `OHF-Voice/piper1-gpl` in late 2025.
-
-Measured on this Pi, short sentences, steady state:
-
-| Voice | Wall per sentence | RTF |
-|---|---|---|
-| `ar_JO-kareem-medium` | ~9.6s | ~4.2 |
-| `ar_JO-kareem-low` | ~9.3s | ~4.5 |
-| `fr_FR-siwis-medium` | ~5.5s | ~1.6 |
-| `en_US-lessac-medium` | ~5.1s | ~1.7 |
-
-**Arabic synthesis runs at roughly 4x slower than real time.** Three things this rules
-out: it is not model-load overhead (measured by piping several sentences through one
-process — the gaps between outputs stay at ~9.4s); it is not voice quality (`low` is
-within 3% of `medium`); and it is not thread count (`OMP_NUM_THREADS=1` and `4` differ by
-under 2%). The Cortex-A53 is simply the limit.
-
-Budget roughly 10s of speech synthesis per reply on top of transcription and the model's
-own answer. Anything conversational needs either a faster host for TTS or much shorter
-replies.
-
-## Phase 2 — the loop
-
-`bin/abbes-loop.py`, run as `abbes-loop.service`. A turn starts when the wake word is
-heard, or when anything writes to the FIFO — `bin/abbes-trigger.sh`, or
-`echo go > $XDG_RUNTIME_DIR/abbes-trigger`. A GPIO button later only has to write to the
-same FIFO. `--once` runs a single turn in the foreground, which is how to debug it.
-
-    name heard -> tone -> record until silence -> whisper -> gateway -> pick voice -> synthesise -> play
-
-**Recordings never persist.** The clip is deleted in a `finally`, so it goes whether
-transcription succeeded, failed, or threw. Verified: no `/tmp/abbes-*.wav` survives a turn.
-
-**Turn log** is `~/.local/state/voicepi/turns.jsonl`, mode 600, pruned to the last 2 hours
-on every write. It lives outside any repository rather than merely being gitignored.
-
-**Failure path.** Any unreachable or timed-out dependency speaks `ما نجمش نجاوبك توة` and
-returns to idle. That phrase is pre-rendered to `~/.cache/voicepi/failure.wav` at startup,
-because synthesising it locally costs ~13s — far too slow to sit inside a failure path.
-It needs no model and no network.
-
-**Text to speech is remote-first with a local fallback.** `PIPER_URL` is tried first; if it
-is unset or unreachable the loop falls back to local Piper and says so in the log. The loop
-therefore works before, during and after the inference host gains a Piper service.
-
-**VAD is a level threshold, and it must be tuned per microphone.** With the webcam mic the
-room floor measured −35 dBFS and speech about −25 dBFS, so `VAD_THRESHOLD_DBFS=-30` sits
-between them. The default of −45 never detected silence at all and every turn ran to
-`VAD_MAX_SECS`. Re-measure after changing microphones: record a few seconds of silence and
-put the threshold above the floor.
+The gateway and the orchestrator both bind loopback on their host by design, so
+nothing on the LAN can POST to them. `openclaw-tunnel.service` forwards both ports
+over SSH and restarts on failure. A dead tunnel is indistinguishable from a dead
+orchestrator at the HTTP layer; either way the loop plays the failure tone.
 
 ## The wake word
 
-Say **يا عباس** or **عباس**. Detection runs entirely on the Pi with
+Say **Abbes**. The detector uses a Tunisian Vosk model because it recognises the
+name reliably; it is used for nothing else, and everything after the trigger is English. Detection runs entirely on the Pi with
 [Vosk](https://alphacephei.com/vosk/): no audio, and no text derived from audio, leaves
 this host until the name has actually been recognised here.
 
@@ -326,7 +245,6 @@ of continuous quiet.
 | `WAKE_GATE_DBFS` | Below this the decoder sleeps. Put it above the room's noise floor. |
 | `WAKE_PREROLL_SECS` | Audio kept from before the trigger. |
 | `WAKE_FOLLOWUP_SECS` | Window after a reply where the name is not needed. 0 disables. |
-| `BARGE_IN_DBFS` | Speaking over Abbes this loudly stops it. 0 disables. |
 
 Comparison folds diacritics, alef forms (أإآ→ا, ى→ي, ة→ه) and Latin accents, then allows
 `WAKE_FUZZ` edits, so عبّاس, عباس, Abbes and abbas all match one entry.
@@ -361,158 +279,6 @@ which is what is wanted. No sudo, and no grepping every service on the box.
 The same is not true of the gateway and inference hosts, where `--user -u` works. This is
 a property of this Pi's journald, not of user units in general.
 
-### Not hearing yourself, and letting yourself be interrupted
-
-The microphone used to be hard-muted for the whole turn after recording ended, with
-`WAKE_MUTE_TAIL_SECS` holding the mute past the end of playback to cover output latency
-and the room's reverb tail. At 0.7s a follow-up window recorded the last word of Abbes's
-own reply and sent it back to the gateway; 1.5s fixed it.
-
-None of that is needed now: the speakerphone cancels its own output, so Abbes cannot
-hear itself no matter how long the microphone stays open. The mute, the tail and the
-1.5s of dead air at the end of every reply are gone.
-
-What the open microphone buys is **barge-in**. While Abbes speaks, a watcher
-(`abbes_audio.BargeIn`) reads the same stream and looks for sustained speech above
-`BARGE_IN_DBFS` (−30, well clear of the −45.7 floor) for `BARGE_IN_MIN_SPEECH_SECS`
-(0.35s, long enough that a door or a cough does not count). When it fires:
-
-1. Playback is killed — including mid-drain, which is where most of a reply is actually
-   heard, since sentences are queued to `pw-cat` far faster than realtime.
-2. The HTTP connection to the orchestrator is closed, and the orchestrator takes that
-   as the signal to `chat.abort` the run. An interruption costs no further tokens and
-   leaves no half-finished turn generating into nothing.
-3. **The audio from the moment you started speaking is kept** and becomes the next
-   request. This is the part that makes it feel like interrupting a person rather than
-   pressing stop: you are not asked to say it again.
-
-Set `BARGE_IN_DBFS=0` to switch it off. Verified: asked to say its own name, Abbes
-answered `...وسمّيتني "عباس" قبيلة...` through the speaker, did not wake itself, and the
-follow-up window stayed silent.
-
-### Known limits
-
-- Recall on the **bare name alone** is weaker than on "يا عباس" followed by a request.
-  A short isolated word gives the decoder little to work with.
-- All figures above are from synthetic speech played through the speaker and
-  re-recorded — a harsher path than a person talking to the microphone, and not a
-  substitute for a real tuning session.
-- The 375 MB model leaves roughly 350 MB free. Nothing else should move onto this Pi.
-
-## Speech to text — and why the audio is sent untouched
-
-`WHISPER_URL` points at the **Vosk `ar-tn` endpoint**, not whisper. Both accept the
-identical multipart POST and return `{"text": ...}`, so switching engines is a port
-change and nothing else. Whisper keeps resolving Derja toward MSA and fragments when it
-cannot; the Vosk model is trained on TARIC, real Tunisian speech.
-
-**Do not apply makeup gain.** There is no longer a knob for it — `AUDIO_NORMALIZE` and
-the silence trimmer that went with it were removed, because both existed to rescue
-recordings from a microphone that no longer exists. The finding that removed them still
-stands, and is why nothing should put them back. The loop once normalised every clip to
-−24 dBFS RMS, which was tuned for whisper and actively broke Derja recognition:
-
-| | with gain (x2.72) | without |
-|---|---|---|
-| 6s of "قداش الوقت" | `صافية` | `قداش الوقت` |
-
-A real recording measured rms −31.6 dBFS but **peak −9.3 dBFS**; multiplying by 2.72 put
-the peaks within a decibel of clipping. The Vosk endpoint is level-insensitive across
-about 25dB, so the gain bought nothing and cost the transcript. Measure the level instead
-— every turn prints the thresholds it used against what it actually heard:
-
-    levels: threshold -36.0 dBFS, p50 -41.2 p90 -19.8 max -12.4
-
-Use `bin/mic-level.sh` to see the same figures live when setting thresholds. It must be
-run directly on the Pi, in a terminal you are watching — a level meter driven over a
-non-interactive SSH command prints its cue only after the recording window has closed,
-which invalidates the measurement.
-
-## Speaker volume
-
-`bin/abbes-volume`, installed to `/usr/local/bin/abbes-volume`, reads and sets the volume
-of `SPEAKER_SINK`. It exists so Abbes can be told out loud to be quieter, and it is reached
-from the gateway host over SSH:
-
-    restrict,command="/usr/local/bin/abbes-volume" ssh-ed25519 AAAA... openclaw-speaker
-
-That entry is the whole of what the gateway can do on this Pi. The key gets no shell, no
-pty and no forwarding, and the script matches every argument against a fixed pattern before
-it reaches `pactl` — `set "99; rm -rf /"` is rejected, not escaped.
-
-    abbes-volume get | up | down | set <0-100> | mute | unmute
-
-`VOLUME_STEP` (default 10) and `VOLUME_MAX` (default 100) are read from `voicepi.env`.
-`XDG_RUNTIME_DIR` is set explicitly because a non-login SSH session does not get one, and
-without it `pactl` cannot find the user's PipeWire socket.
-
-## Talking to the gateway
-
-The supported interface is the `openclaw agent` CLI, run on the gateway host over SSH as
-the user that owns `~/.openclaw`. The Pi never formats a shell command containing the
-transcript: the key carries a **forced command**, `gateway/abbes-ask`, which reads the
-message from stdin and passes it via `--message-file`. Whisper output is untrusted text
-arriving from a microphone and will contain quotes, newlines and Arabic script, so keeping
-it off the command line is deliberate.
-
-Install `gateway/abbes-ask` as `/usr/local/bin/abbes-ask` on the gateway host and restrict
-the key in `authorized_keys`:
-
-    restrict,command="/usr/local/bin/abbes-ask" ssh-ed25519 AAAA... voicepi-openclaw-tunnel
-
-Note the tunnel key needs `port-forwarding` as well; use a **second key** for the agent
-call rather than widening the tunnel key, so a forced command and a port forward never
-share one credential.
-
-The wrapper asks for `--json` and reads `final` from the envelope, checking `status` is
-`ok` — `error` and `timeout` are distinct statuses and both must fail loudly rather than
-returning empty text that would be synthesised as silence.
-
-**Turns are never retried.** A gateway timeout can still complete server-side, so a retry
-could run the turn twice — which matters as soon as tools write to the grocery list or the
-baby log. On failure the loop speaks the degradation phrase and returns to idle.
-
-A stable `--session-key voice` keeps conversational context across turns; with
-`--agent main` it scopes to `agent:main:voice`.
-
-## Text to speech, remote
-
-`PIPER_URL` points at the Piper server on the inference host (port 9091, no auth, JSON in,
-WAV bytes out). Measured from this Pi:
-
-| Voice | Audio | Wall | RTF |
-|---|---|---|---|
-| `ar_JO-kareem-medium` | 3.84s | **0.21s** | 0.056 |
-| `fr_FR-siwis-medium` | 1.65s | 0.08s | 0.049 |
-| `en_US-lessac-medium` | 1.38s | 0.07s | 0.048 |
-
-About 45x faster than local Piper, which took ~9.6s for ~2.3s of Arabic.
-
-**Local Piper is kept deliberately**, against the server's handoff advice to delete it. It
-is the fallback when the LAN or the inference host is down, and it is what renders the
-degradation phrase — which must work with no network and no model at all. It costs ~292MB
-of disk on a 29GB card.
-
-`PIPER_TIMEOUT` is 5s, not the 30s the handoff suggests. A closed port on a *live* host
-drops packets instead of refusing them, so the full timeout is spent before falling back:
-at 30s a single failed turn took 41s end to end. Synthesis itself is 0.2s, so 5s is still
-25x headroom.
-
-Voice names must match exactly — an unknown voice returns the default **with HTTP 200**,
-so a typo silently reads French in an Arabic voice rather than erroring.
-
-## Whisper noise labels
-
-Whisper annotates non-speech rather than returning nothing: `(موسيقى)`, `(مسجد)`, `(مشي)`,
-`[Music]`, `[Silence]`, `*soupir*`. On a quiet or short clip the whole transcript can be one
-of these, and on a normal turn one usually precedes the speech. They were reaching the
-agent as part of the prompt.
-
-`clean_transcript` drops lines that consist *only* of such an annotation. Parentheses
-inside real speech are left alone — only a whole-line label is removed. If nothing
-survives, the turn is treated as silence and the loop returns to idle without calling the
-agent.
-
 ## Boot
 
 `abbes-audio.service` runs before the loop: it waits for PipeWire, selects the analog
@@ -524,6 +290,6 @@ Volume is pinned rather than left alone because it drifts otherwise, and an unpi
 level silently leaves Abbes too quiet to hear.
 
 **Quote any config value containing spaces.** `voicepi.env` is read both by the Python
-loop and sourced by shell scripts. An unquoted `WHISPER_PROMPT` made bash try to execute
-the vocabulary list as a command. The loop strips surrounding quotes when it parses the
+loop and sourced by shell scripts. An unquoted `WAKE_WORDS` makes bash try to execute
+the word list as a command. The loop strips surrounding quotes when it parses the
 file, so quoting is safe for both readers.

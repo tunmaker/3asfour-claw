@@ -3,80 +3,71 @@
 A self-hosted household assistant built on OpenClaw, running entirely on local
 inference. No cloud AI provider, no external search API.
 
-Speaks Tunisian Derja (Arabic script), فصحى, French and English, mirroring whoever
-it is talking to. Handles notes, appointments, grocery lists, a baby log, and
-retrieval from a local Qur'an text.
+It speaks English. You call it by name in the room, or write to it in the
+Control UI or over WhatsApp. It keeps the grocery list and plays music, and
+otherwise answers from the model.
 
-## Design
+## How a voice turn works
 
-- **Local inference only.** Chat, speech-to-text, embeddings and search are served
-  by a separate machine on the LAN. The model catalogue resolves to a single local
-  model and unconfigured providers cannot appear.
-- **A small set of tools.** The agent is given a fixed set of small scripts and
-  nothing else.
-- **Write tools return what they wrote.** A small model will otherwise confirm
-  actions it did not perform, so every write verifies itself and prints the stored
-  record.
-- **Never generate scripture.** Qur'anic text is retrieved from a local source file
-  or refused. It is never produced from the model's memory.
+```
+Pi:           wake word "Abbes" (Vosk, on the Pi) -> tone -> record until silence
+                 | one HTTP request over the SSH tunnel
+Orchestrator: whisper (speech -> text) -> OpenClaw voice session -> Piper, per sentence
+                 | WAV frames stream back as each sentence renders
+Pi:           play
+```
+
+whisper, Piper and the model run on the inference host
+([intel-gpu-inference](https://github.com/tunmaker/intel-gpu-inference)).
 
 ## Layout
 
 | Path | Contents |
 | --- | --- |
-| `abbes/` | System prompt, identity files, skills, config template |
-| `bin/` | The scripts the agent is allowed to execute |
+| `abbes/` | The prompt (AGENTS.md, IDENTITY.md) and the config template |
+| `orchestrator/` | The voice path on the gateway host: whisper -> gateway -> Piper |
+| `pi/` | The voice satellite: wake word, recording, playback |
+| `bin/` | Nightly backup, and the transcriber for WhatsApp voice notes |
 | `systemd/` | User units for the gateway, calendar and backups |
 | `docs/` | Operations reference |
 
-No runtime data is stored in this repository. Notes and lists live in an Obsidian
-vault; the baby log and reference texts live under `$ABBES_DATA_DIR`
-(default `/var/lib/abbes`). Both are configured, never hardcoded.
+## Tools
+
+The agent has two MCP servers and nothing else: **grocy** for the shopping list
+and pantry, and **jellyfin** for music on the Pi speaker. The allowlist is
+`tools.allow` in the config; there is no exec and no filesystem access.
 
 ## Setup
 
 1. Install OpenClaw (Node 22+) as a dedicated non-root user.
-2. Copy `abbes/openclaw.json.template` to `~/.openclaw/openclaw.json` and replace
-   `LLAMA_SERVER_IP` with your inference host.
+2. Copy `abbes/openclaw.json.template` to `~/.openclaw/openclaw.json`, replace
+   `LLAMA_SERVER_IP`, and fill in the MCP servers (see docs/RUN.md).
 3. Copy `.env.example` to `~/.openclaw/openclaw.env`, fill it in, `chmod 600`.
-4. Install the units from `systemd/` and enable lingering for the service user.
-5. Copy `bin/` into place and allowlist the scripts for exec.
-
-See [docs/RUN.md](docs/RUN.md) for operations, security model, and backups.
+4. Enable lingering for the service user, then run `./deploy.sh`.
+5. Set up the Pi as described in [pi/README.md](pi/README.md).
 
 ## Updating a deployment
 
-This repository is the single source of truth. Edit and push from a working copy,
-then on the host that runs the assistant:
+This repository is the single source of truth. On the host that runs the
+assistant, from a checkout:
 
 ```bash
-git pull
 ./deploy.sh
+systemctl --user restart openclaw-gateway abbes-orchestrator
 ```
 
-`deploy.sh` installs the scripts, systemd units, prompt and skills into place,
-reports what changed, and reloads systemd. It never touches `USER.md`, `MEMORY.md`,
-or any data — those are private and live outside this repository.
-
-## Qur'an text
-
-Not distributed here. Install a plain-text Uthmani source at
-`$ABBES_DATA_DIR/reference/quran/quran-uthmani.txt`, read-only to the agent. Until
-then the tool refuses every request, which is the intended behaviour.
+`deploy.sh` installs the prompt, the orchestrator, the scripts and the systemd
+units, and reports what changed. It never touches `USER.md`, `MEMORY.md`, or any
+data — those are private and live outside this repository.
 
 ## Repository policy
 
-Secrets and personal data never enter the working tree. Runtime data lives outside
-the repository entirely, so no `git add` can reach it.
-
-Enable the pre-commit hook immediately after cloning — git does not do it for you:
+Secrets and personal data never enter the working tree. Enable the pre-commit
+hook immediately after cloning:
 
 ```bash
 git config core.hooksPath .githooks
 ```
-
-It blocks private and tailnet IP addresses, token and password assignments, key
-material, and data file types.
 
 [AGENTS.md](AGENTS.md) states the rules in full and applies to humans and coding
 agents alike. Read it before contributing.
