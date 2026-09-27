@@ -29,13 +29,15 @@ whisper, Piper and the model run on the inference host
 | `pi/` | The voice satellite: wake word, recording, playback |
 | `bin/` | Nightly backup, and the transcriber for WhatsApp voice notes |
 | `systemd/` | User units for the gateway, calendar and backups |
+| `containers/` | Quadlet units for Baby Buddy and its MCP server, in rootless podman |
 | `docs/` | Operations reference |
 
 ## Tools
 
-Three MCP servers: **grocy** for the shopping list and pantry, **jellyfin** for
-music on the Pi speaker, and **open-websearch** (self-hosted on the inference
-host) for the web. Plus OpenClaw's own memory tools, and `write`/`edit` confined
+Four MCP servers: **grocy** for the shopping list and pantry, **jellyfin** for
+music on the Pi speaker, **babybuddy** for the baby log, and **open-websearch**
+(self-hosted on the inference host) for the web. Plus OpenClaw's own memory tools,
+and `write`/`edit` confined
 to the workspace so memory notes can be kept. The allowlist is `tools.allow` in
 the config; there is no exec.
 
@@ -46,7 +48,8 @@ the config; there is no exec.
    `LLAMA_SERVER_IP`, and fill in the MCP servers (see docs/RUN.md).
 3. Copy `.env.example` to `~/.openclaw/openclaw.env`, fill it in, `chmod 600`.
 4. Enable lingering for the service user, then run `./deploy.sh`.
-5. Set up the Pi as described in [pi/README.md](pi/README.md).
+5. Set up the containers as described in [containers/README.md](containers/README.md).
+6. Set up the Pi as described in [pi/README.md](pi/README.md).
 
 ## Updating a deployment
 

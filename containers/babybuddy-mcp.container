@@ -1,0 +1,18 @@
+[Unit]
+Description=Baby Buddy MCP server
+Requires=babybuddy.service
+After=babybuddy.service
+
+[Container]
+ContainerName=babybuddy-mcp
+Image=localhost/babybuddy-mcp:latest
+Network=host
+EnvironmentFile=%h/.config/babybuddy-mcp/env
+Environment=BABYBUDDY_URL=http://127.0.0.1:8000 MCP_TRANSPORT=http MCP_HOST=127.0.0.1 MCP_PORT=8081
+PodmanArgs=--pull=never
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

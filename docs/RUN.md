@@ -12,7 +12,12 @@ so services start at boot without a login.
 | `openclaw-gateway.service` | The agent and its Control UI |
 | `abbes-orchestrator.service` | The voice path: whisper -> gateway -> Piper, on `127.0.0.1:18790` |
 | `radicale.service` | CalDAV calendar (a data service; the agent has no calendar tool) |
+| `babybuddy.service` | Baby Buddy, in rootless podman — web UI and REST API on `:8000` |
+| `babybuddy-mcp.service` | Its MCP server, HTTP transport, on `127.0.0.1:8081` |
 | `abbes-backup.timer` | Nightly data backup |
+
+Both podman units come from quadlet files in `containers/`; see
+[containers/README.md](../containers/README.md) for the one-time host setup.
 
 Inference runs on a separate machine on the LAN: the chat model, whisper
 (speech-to-text), Piper (text-to-speech), embeddings for memory search, and the
@@ -57,7 +62,7 @@ The prompt is `abbes/AGENTS.md` and `abbes/IDENTITY.md`, plus the private
 default SOUL.md and HEARTBEAT.md are not created. The whole system prompt with
 tools is about 5,300 tokens.
 
-Tools are an explicit allowlist (`tools.allow`): the grocy, jellyfin and
+Tools are an explicit allowlist (`tools.allow`): the grocy, jellyfin, babybuddy and
 open-websearch MCP tools, `memory_search`/`memory_get`, and `write`/`edit`
 restricted to the workspace (`tools.fs.workspaceOnly`). There is no exec, and the
 built-in web providers stay denied: search goes through the self-hosted
@@ -87,6 +92,7 @@ prefill.
 | Location | Contents |
 |---|---|
 | `/var/www/grocy/data/` | Grocy database (groceries and pantry) |
+| `~/containers/babybuddy/config/` | Baby Buddy database (the baby log) |
 | `~/.openclaw/workspace/` | Prompt, identity, memory |
 | `~/.local/share/radicale/` | Calendar events |
 
@@ -130,6 +136,16 @@ deploy script creates them.
 - **grocy** — `~/.venvs/grocy-mcp/bin/grocy-mcp` (stdio). Grocy itself runs on
   this host: nginx + PHP-FPM serving `/var/www/grocy`, SQLite in
   `/var/www/grocy/data/`. API key in `~/.config/grocy-mcp/config.toml` (mode 600).
+- **babybuddy** — `http://127.0.0.1:8081/mcp/` (streamable-http). The official
+  server, running in podman next to Baby Buddy itself; both are managed by the
+  quadlet units in `containers/`. Its API token is in
+  `~/.config/babybuddy-mcp/env` (mode 600), not in the OpenClaw config. It serves 63
+  tools; 12 are allowlisted — children, feedings, diapers, sleep, pumping and timers,
+  `list_` and `create_` only. Tool schemas are expensive here (about 250 tokens each,
+  and prefill runs at ~9 ms/token), so tummy time, notes and measurements are left
+  out rather than paid for on every turn; each is one line in `tools.allow`. The
+  assistant's Baby Buddy user has no change or delete permission either, so an entry
+  cannot be rewritten even by mistake.
 - **jellyfin** — `~/.local/bin/jellyfin-mcp` (stdio, official binary),
   `--disable-destructive --toolsets discovery,media,playback`. `JELLYFIN_URL`
   and `JELLYFIN_API_KEY` are set as env on the server entry.

@@ -43,6 +43,17 @@ if [ -f "$REPO/systemd/openclaw-gateway.override.conf" ]; then
         "$UNIT_DIR/openclaw-gateway.service.d/override.conf" 644
 fi
 
+QUADLET_DIR="$HOME/.config/containers/systemd"
+mkdir -p "$QUADLET_DIR"
+for f in "$REPO"/containers/*.container "$REPO"/containers/*.network; do
+    [ -e "$f" ] || continue
+    install_file "$f" "$QUADLET_DIR/$(basename "$f")" 644
+done
+for f in "$REPO"/containers/*.sh; do
+    [ -e "$f" ] || continue
+    install_file "$f" "$BIN_DIR/$(basename "$f")" 755
+done
+
 ORCH_DIR="$HOME/orchestrator"
 mkdir -p "$ORCH_DIR"
 for f in "$REPO"/orchestrator/*.mjs; do

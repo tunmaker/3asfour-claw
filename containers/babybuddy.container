@@ -1,0 +1,19 @@
+[Unit]
+Description=Baby Buddy
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=babybuddy
+Image=lscr.io/linuxserver/babybuddy:latest
+Network=host
+EnvironmentFile=%h/.config/babybuddy/env
+Environment=PUID=1000 PGID=1000
+Volume=%h/containers/babybuddy/config:/config
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

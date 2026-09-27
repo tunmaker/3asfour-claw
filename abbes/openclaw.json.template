@@ -295,7 +295,19 @@
       "jellyfin__jellyfin_music",
       "jellyfin__jellyfin_play",
       "jellyfin__jellyfin_playback_control",
-      "jellyfin__jellyfin_sessions"
+      "jellyfin__jellyfin_sessions",
+      "babybuddy__children_list_children",
+      "babybuddy__feedings_list_feedings",
+      "babybuddy__feedings_create_feeding",
+      "babybuddy__diapers_list_diaper_changes",
+      "babybuddy__diapers_create_diaper_change",
+      "babybuddy__sleep_list_sleep",
+      "babybuddy__sleep_create_sleep",
+      "babybuddy__pumping_list_pumping",
+      "babybuddy__pumping_create_pumping",
+      "babybuddy__timers_list_timers",
+      "babybuddy__timers_create_timer",
+      "babybuddy__timers_restart_timer"
     ],
     "fs": {
       "workspaceOnly": true
@@ -315,6 +327,12 @@
             "fetchLinuxDoArticle"
           ]
         }
+      },
+      "babybuddy": {
+        "enabled": true,
+        "url": "http://127.0.0.1:8081/mcp/",
+        "transport": "streamable-http",
+        "requestTimeoutMs": 60000
       },
       "grocy": {
         "command": "/home/openclaw/.venvs/grocy-mcp/bin/grocy-mcp",
