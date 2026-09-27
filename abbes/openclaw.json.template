@@ -335,16 +335,10 @@
         "tokens": 512,
         "overlap": 64
       },
-      "extraPaths": [
-        "/home/openclaw/.openclaw/workspace/notes",
-        "/home/openclaw/.openclaw/workspace/groceries"
-      ],
+      "extraPaths": [],
       "query": {
         "maxResults": 6,
-        "minScore": 0.25,
-        "hybrid": {
-          "enabled": true
-        }
+        "minScore": 0.25
       }
     }
   },
