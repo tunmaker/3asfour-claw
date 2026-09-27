@@ -35,6 +35,9 @@ Two files, neither of them in this repository:
 
 | Variable | Meaning |
 |---|---|
+| `LLAMACPP_API_KEY` | Key for the inference host, chat and embeddings |
+| `OPENCLAW_GATEWAY_TOKEN` | Control UI authentication |
+| `OPENCLAW_HOOK_TOKEN` | Inbound hooks; sessions must start with `hook:` |
 | `WHISPER_URL` | whisper-server `/inference` endpoint |
 | `PIPER_URL` | Piper server |
 | `ABBES_DATA_DIR` | Local runtime data (default `/var/lib/abbes`) |

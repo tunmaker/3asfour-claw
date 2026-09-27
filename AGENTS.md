@@ -51,10 +51,11 @@ Runtime data belongs in these places, all outside the tree:
 
 | Data | Location |
 |---|---|
-| Notes and lists | The Obsidian vault (`$ABBES_VAULT_DIR`) |
-| Baby log, reference texts | `$ABBES_DATA_DIR` (default `/var/lib/abbes`) |
+| Baby log | Baby Buddy's database, in its container volume |
+| Reference texts | `$ABBES_DATA_DIR` (default `/var/lib/abbes`) |
 | Agent workspace, memory | `~/.openclaw/workspace/` |
 | Calendar collections | `~/.local/share/radicale/` |
+| Groceries and pantry | Grocy's database |
 
 If you add a feature that writes data, it writes to one of those. **Do not create a
 new writable directory inside the repository.** If you think you need one, that is
@@ -78,14 +79,14 @@ Every path, host, port, and address must come from the environment. Scripts must
 **fail loudly on a missing variable** rather than fall back to a default:
 
 ```bash
-VAULT="${ABBES_VAULT_DIR:?ABBES_VAULT_DIR is not set (see .env.example)}"
+DATA="${ABBES_DATA_DIR:?ABBES_DATA_DIR is not set (see .env.example)}"
 ```
 
 Never write a fallback that encodes the author's own layout — `${VAR:-/mnt/nas/...}`
 is a leak with a default attached, and it silently writes to the wrong place on
 someone else's machine.
 
-Documentation follows the same rule: write `$ABBES_VAULT_DIR` or `<host>`, never a
+Documentation follows the same rule: write `$ABBES_DATA_DIR` or `<host>`, never a
 real path or address.
 
 ## 4. The pre-commit hook is mandatory
