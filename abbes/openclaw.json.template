@@ -57,11 +57,6 @@
     "triggers": {
       "enabled": true
     },
-    "webhookToken": {
-      "source": "env",
-      "provider": "default",
-      "id": "OPENCLAW_CRON_WEBHOOK_TOKEN"
-    },
     "sessionRetention": "24h"
   },
   "hooks": {
@@ -125,16 +120,7 @@
       "anthropic": {
         "enabled": false
       },
-      "byteplus": {
-        "enabled": false
-      },
       "clawrouter": {
-        "enabled": false
-      },
-      "cohere": {
-        "enabled": false
-      },
-      "comfy": {
         "enabled": false
       },
       "copilot-proxy": {
@@ -158,19 +144,10 @@
       "lmstudio": {
         "enabled": false
       },
-      "meta": {
-        "enabled": false
-      },
       "microsoft-foundry": {
         "enabled": false
       },
       "minimax": {
-        "enabled": false
-      },
-      "mistral": {
-        "enabled": false
-      },
-      "novita": {
         "enabled": false
       },
       "nvidia": {
@@ -182,9 +159,6 @@
       "openai": {
         "enabled": false
       },
-      "opencode": {
-        "enabled": false
-      },
       "opencode-go": {
         "enabled": false
       },
@@ -194,25 +168,13 @@
       "sglang": {
         "enabled": false
       },
-      "synthetic": {
-        "enabled": false
-      },
       "together": {
         "enabled": false
       },
       "vllm": {
         "enabled": false
       },
-      "volcengine": {
-        "enabled": false
-      },
-      "vydra": {
-        "enabled": false
-      },
       "xai": {
-        "enabled": false
-      },
-      "xiaomi": {
         "enabled": false
       },
       "document-extract": {
@@ -224,16 +186,10 @@
       "runway": {
         "enabled": false
       },
-      "voyage": {
-        "enabled": false
-      },
       "microsoft": {
         "enabled": false
       },
       "senseaudio": {
-        "enabled": false
-      },
-      "phone-control": {
         "enabled": false
       }
     }
