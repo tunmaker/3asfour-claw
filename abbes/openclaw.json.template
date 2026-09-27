@@ -320,7 +320,7 @@
       "fallback": "none",
       "model": "bge-m3",
       "remote": {
-        "baseUrl": "http://LLAMA_SERVER_IP:8085/v1",
+        "baseUrl": "http://LLAMA_SERVER_IP:8002/v1",
         "apiKey": {
           "source": "env",
           "provider": "default",
