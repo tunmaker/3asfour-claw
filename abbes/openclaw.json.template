@@ -246,6 +246,11 @@
       "grocy__stock_overview_tool",
       "grocy__stock_search_tool",
       "grocy__stock_expiring_tool",
+      "grocy__shopping_list_add_tool",
+      "grocy__stock_product_info_tool",
+      "grocy__stock_add_tool",
+      "grocy__stock_consume_tool",
+      "grocy__stock_inventory_tool",
       "jellyfin__jellyfin_search",
       "jellyfin__jellyfin_music",
       "jellyfin__jellyfin_play",
@@ -294,7 +299,26 @@
         "args": [
           "--transport",
           "stdio"
-        ]
+        ],
+        "toolFilter": {
+          "include": [
+            "shopping_list_view_tool",
+            "shopping_list_add_tool",
+            "shopping_list_remove_tool",
+            "shopping_list_set_amount_tool",
+            "shopping_list_set_note_tool",
+            "shopping_list_clear_tool",
+            "stock_overview_tool",
+            "stock_search_tool",
+            "stock_product_info_tool",
+            "stock_expiring_tool",
+            "stock_add_tool",
+            "stock_consume_tool",
+            "stock_inventory_tool",
+            "entity_create_tool",
+            "system_info_tool"
+          ]
+        }
       },
       "jellyfin": {
         "command": "/home/openclaw/.local/bin/jellyfin-mcp",
