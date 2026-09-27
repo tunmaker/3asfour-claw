@@ -90,21 +90,25 @@ If the recording during playback sits near the room floor, the cancellation is r
 If it sits 20 dB above it, the microphone hears the speaker and muting has to come back.
 
 **The USB controller is the real constraint on this Pi, and it is shared.**
-Everything hangs off one `dwc_otg` controller behind one SMSC9514 hub — Ethernet
-included:
+Everything hangs off one `dwc_otg` controller behind one SMSC9514 hub — the
+network included:
 
 ```
 dwc_otg root hub (480M)
  └── SMSC9514 hub
-      ├── Dev 003  Ethernet  480M   smsc95xx
-      ├── Dev 004  Jabra      12M   snd-usb-audio   <- full speed
-      └── Dev 007  webcam    480M   uvcvideo
+      ├── Dev 003  Ethernet   480M   smsc95xx
+      ├── Dev 004  USB Wi-Fi  480M   rtw88_8821au
+      └── Dev 005  Jabra       12M   snd-usb-audio   <- full speed
 ```
 
 The speakerphone is a **full-speed (12M) device behind a high-speed hub**, so
 every audio frame is a USB *split transaction*, and split isochronous transfers
-are the known weak point of `dwc_otg`'s FIQ. The camera streams isochronously
-too. They compete for the same scheduling.
+are the known weak point of `dwc_otg`'s FIQ. Anything else moving data across
+that hub competes for the same scheduling: the webcam did while it was fitted,
+and the Wi-Fi adapter does now. A few NYET entries an hour is the bus
+complaining without losing the stream — `pw-top` still shows the capture node
+`R`unning with `ERR 0`. Hundreds of them, with capture stopping, is the wedge
+described below.
 
 It wedged, once, and the shape is worth knowing because nothing about it looks
 like an audio fault:
