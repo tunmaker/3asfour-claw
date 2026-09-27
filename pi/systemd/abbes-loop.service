@@ -13,10 +13,10 @@ TimeoutStopSec=15
 # Restarting fixes a crashed loop. It does not fix a microphone that has stopped
 # delivering, and the difference is worth 5s against 300s: when the USB
 # controller's isochronous scheduling wedges, every restart is a fresh parecord
-# on a dead endpoint, 17s of Vosk loading, and another failed camera grab on the
-# bus that is already the problem. Left at a flat 5s this ran 404 times in four
-# hours and recovered nothing. It now backs off to five minutes, so a loop that
-# cannot fix itself waits quietly instead of holding the bus down.
+# on a dead endpoint and 17s of Vosk loading, on the bus that is already the
+# problem. Left at a flat 5s this ran 404 times in four hours and recovered
+# nothing. It now backs off to five minutes, so a loop that cannot fix itself
+# waits quietly instead of holding the bus down.
 RestartSec=5
 RestartSteps=6
 RestartMaxDelaySec=300
