@@ -239,7 +239,6 @@
       "open-websearch__fetchWebContent",
       "open-websearch__fetchGithubReadme",
       "grocy__shopping_list_view_tool",
-      "grocy__entity_create_tool",
       "grocy__shopping_list_remove_tool",
       "grocy__shopping_list_clear_tool",
       "grocy__shopping_list_set_amount_tool",
@@ -315,7 +314,6 @@
             "stock_add_tool",
             "stock_consume_tool",
             "stock_inventory_tool",
-            "entity_create_tool",
             "system_info_tool"
           ]
         }
