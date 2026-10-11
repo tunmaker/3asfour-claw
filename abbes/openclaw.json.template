@@ -266,7 +266,11 @@
       "babybuddy__pumping_create_pumping",
       "babybuddy__timers_list_timers",
       "babybuddy__timers_create_timer",
-      "babybuddy__timers_restart_timer"
+      "babybuddy__timers_restart_timer",
+      "grocy__shopping_list_update_tool",
+      "grocy__locations_list_tool",
+      "grocy__catalog_list_tool",
+      "grocy__catalog_create_tool"
     ],
     "fs": {
       "workspaceOnly": true
@@ -314,7 +318,11 @@
             "stock_add_tool",
             "stock_consume_tool",
             "stock_inventory_tool",
-            "system_info_tool"
+            "system_info_tool",
+            "shopping_list_update_tool",
+            "locations_list_tool",
+            "catalog_list_tool",
+            "catalog_create_tool"
           ]
         }
       },

@@ -42,8 +42,9 @@ Only say something was done if the tool result says so.
 
 | Tool | Arguments |
 |---|---|
-| `grocy__shopping_list_view_tool` | none — lists items as `[item_id] name` |
+| `grocy__shopping_list_view_tool` | none — lists items as `[item_id] name — amount (note)` |
 | `grocy__shopping_list_add_tool` | product: str, amount?: number, note?: str |
+| `grocy__shopping_list_update_tool` | item_id: int, data: str — JSON text, e.g. '{"done": 1, "note": "bought"}' |
 | `grocy__shopping_list_set_amount_tool` | item_id: int, amount: number |
 | `grocy__shopping_list_remove_tool` | item_id: int |
 | `grocy__shopping_list_clear_tool` | none — empties the whole list; only when told to clear it |
@@ -51,24 +52,40 @@ Only say something was done if the tool result says so.
 | `grocy__stock_expiring_tool` | none — expiring, expired, or running low |
 | `grocy__stock_search_tool` | query: str — lists products as `[id] name` |
 | `grocy__stock_product_info_tool` | product: str |
-| `grocy__stock_add_tool` | product: str, amount: number — bought |
+| `grocy__stock_add_tool` | product: str, amount: number — put into stock |
 | `grocy__stock_consume_tool` | product: str, amount: number — used up |
 | `grocy__stock_inventory_tool` | product: str, new_amount: number — exact count |
+| `grocy__locations_list_tool` | none — lists locations as `[id] name` |
+| `grocy__catalog_list_tool` | entity: "quantity_units" |
+| `grocy__catalog_create_tool` | entity: "products", data: str — JSON text of the new product |
 
 Every `product` must be a name `stock_search` returned. Product names are whatever
 the household typed, mostly French: search first, and if an English word finds
 nothing, search again in French (milk → lait, butter → beurre, yogurt → yaourt).
-Never translate or invent a name. To change or remove a list item, view the list
-first for its `item_id`.
+Never translate a name. To change a list item, view the list first for its `item_id`.
 
-- Good: "we bought two milks" → stock_search(query="lait") → `[7] Lait demi-écrémé`
-  → stock_add(product="Lait demi-écrémé", amount=2)
+- Bought something that is on the list: mark it done with both fields,
+  shopping_list_update(item_id=32, data='{"done": 1, "note": "bought"}'), keeping any
+  note as '{"done": 1, "note": "salted, bought"}'. The list view cannot show "done",
+  so the note is how you see it later: items noted "bought" are no longer needed.
+  Bought something not on the list: `stock_add`.
+- Only after `stock_search` found nothing in English and then in French, create the
+  product and carry on. `locations_list` (Fridge
+  for fresh food, Pantry otherwise) and `catalog_list(entity="quantity_units")` for
+  Piece's id, then catalog_create(entity="products", data='{"name": "Dragon fruit",
+  "location_id": 5, "qu_id_purchase": 9, "qu_id_stock": 9, "qu_id_consume": 9,
+  "qu_id_price": 9}') using the ids you looked up. From then on use its name, as
+  text, never its id. Say that you created it.
+
+- Good: "we bought two milks", not on the list → stock_search(query="lait") →
+  `[7] Lait demi-écrémé` → stock_add(product="Lait demi-écrémé", amount=2)
+- Bad: creating "Milk" when "Lait demi-écrémé" exists — always search both languages first.
+- Bad: data='{"done": 1}' alone — without the note you cannot tell later that it was bought.
 - Bad: stock_add(product="milk", amount="2") — unsearched name, amount as text.
 - Bad: shopping_list_remove(item_id="Butter") — needs the number from the list.
 
-Nothing found in either language: say so and offer the shopping list. From a photo:
-match each item with `stock_search`, set counts with `stock_inventory`, list what did
-not match. Recipes come from `stock_overview` and your own knowledge.
+From a photo: match each item with `stock_search`, set counts with `stock_inventory`,
+list what did not match. Recipes come from `stock_overview` and your own knowledge.
 
 ### Music (jellyfin)
 
