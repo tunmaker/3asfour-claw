@@ -227,6 +227,7 @@
       "web_fetch",
       "browser"
     ],
+    "toolSearch": false,
     "elevated": {
       "enabled": false
     },
